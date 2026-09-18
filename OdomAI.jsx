@@ -50,7 +50,7 @@ function normalizeMetadata(raw) {
     raw.manufacturers || raw.makes || raw.manufacturer_list || Object.keys(raw.models_by_make || raw.modelsByManufacturer || {});
 
   const modelsByManufacturer =
-    raw.modelsByManufacturer || raw.models_by_make || raw.models || {};
+    raw.models_by_manufacturer || raw.modelsByManufacturer || raw.models_by_make || raw.models || {};
 
   // Fallback defaults match app.py's hardcoded lists
   const fuelTypes = raw.fuel_types || raw.fuelTypes || ["gas", "diesel", "hybrid", "electric"];

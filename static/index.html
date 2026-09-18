@@ -1,179 +1,458 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Car Price Predictor Test</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; max-width: 500px; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; font-weight: bold; margin-bottom: 5px; }
-        select, input { width: 100%; padding: 8px; box-sizing: border-box; }
-        button { padding: 10px 15px; background-color: #007BFF; color: white; border: none; cursor: pointer; font-size: 1em; }
-        button:hover { background-color: #0056b3; }
-        .result { margin-top: 20px; padding: 15px; background-color: #e9ecef; font-size: 1.2em; font-weight: bold; display: none; }
-        .error { color: red; margin-top: 20px; font-weight: bold; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OdomAI — Beyond the odometer. Know your car's true value.</title>
+  <meta name="description" content="OdomAI uses AI to predict the true market value of any used car. Enter your vehicle's details and get an instant price estimate." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #EEEDFE; }
+  </style>
+
+  <!-- React 18 via CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel Standalone — transforms JSX in-browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
 </head>
 <body>
+  <div id="root"></div>
 
-    <h2>Used Car Price Predictor (Static)</h2>
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback } = React;
 
-    <form id="predict-form">
+    // ---------------------------------------------------------------------------
+    // Brand tokens
+    // ---------------------------------------------------------------------------
+    const COLORS = {
+      purple:     "#534AB7",
+      dial:       "#AFA9EC",
+      gaugeLight: "#EEEDFE",
+      night:      "#0F0B26",
+      green:      "#1D9E75",
+      red:        "#C24B4B",
+      white:      "#FFFFFF",
+    };
 
-        <div class="form-group">
-            <label>Manufacturer:</label>
-            <select name="manufacturer" id="manufacturer" required>
-                <option value="">Loading...</option>
-            </select>
+    const TAGLINE = "Beyond the odometer. Know your car's true value.";
+    const API_BASE = "https://odomai.onrender.com";
+
+    const CURRENT_YEAR = new Date().getFullYear();
+    const MIN_YEAR = 1980;
+    const MAX_YEAR = CURRENT_YEAR + 1;
+    const MAX_MILES = 400000;
+
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+    function normalizeMetadata(raw) {
+      if (!raw || typeof raw !== "object")
+        return { manufacturers: [], modelsByManufacturer: {}, fuelTypes: [], transmissions: [] };
+
+      const manufacturers =
+        raw.manufacturers || raw.makes || raw.manufacturer_list ||
+        Object.keys(raw.models_by_make || raw.modelsByManufacturer || {});
+
+      const modelsByManufacturer =
+        raw.modelsByManufacturer || raw.models_by_make || raw.models || {};
+
+      // Fallback defaults match app.py's hardcoded lists
+      const fuelTypes = raw.fuel_types || raw.fuelTypes || ["gas", "diesel", "hybrid", "electric"];
+      const transmissions = raw.transmissions || ["automatic", "manual"];
+
+      return {
+        manufacturers:        Array.isArray(manufacturers) ? manufacturers : [],
+        modelsByManufacturer: (modelsByManufacturer && typeof modelsByManufacturer === "object") ? modelsByManufacturer : {},
+        fuelTypes:            Array.isArray(fuelTypes) ? fuelTypes : [],
+        transmissions:        Array.isArray(transmissions) ? transmissions : [],
+      };
+    }
+
+    function placeholderConfidence({ year, odometer }) {
+      const age       = CURRENT_YEAR - Number(year || CURRENT_YEAR);
+      const ageScore  = Math.max(0, 100 - age * 4);
+      const mileScore = Math.max(0, 100 - (Number(odometer || 0) / MAX_MILES) * 100);
+      return Math.round(Math.min(96, Math.max(35, ageScore * 0.5 + mileScore * 0.5)));
+    }
+
+    function formatCurrency(n) {
+      return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+    }
+
+    function formatMiles(n) {
+      return new Intl.NumberFormat("en-US").format(n);
+    }
+
+    function confidenceColor(pct) {
+      const t    = Math.max(0, Math.min(100, pct)) / 100;
+      const hex  = (c) => Math.round(c).toString(16).padStart(2, "0");
+      const from = { r: 0xc2, g: 0x4b, b: 0x4b };
+      const to   = { r: 0x1d, g: 0x9e, b: 0x75 };
+      const r = from.r + (to.r - from.r) * t;
+      const g = from.g + (to.g - from.g) * t;
+      const b = from.b + (to.b - from.b) * t;
+      return `#${hex(r)}${hex(g)}${hex(b)}`;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Logo
+    // ---------------------------------------------------------------------------
+    function Logo({ variant = "light", size = 28 }) {
+      const ink    = variant === "dark" ? COLORS.white : variant === "brand" ? COLORS.purple : COLORS.night;
+      const needle = variant === "dark" ? COLORS.dial  : COLORS.purple;
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+            <circle cx="20" cy="20" r="18" fill="none" stroke={variant === "dark" ? COLORS.dial : COLORS.gaugeLight} strokeWidth="3" />
+            <path d="M20 20 L28 12" stroke={needle} strokeWidth="2.5" strokeLinecap="round" />
+            <circle cx="20" cy="20" r="3" fill={needle} />
+          </svg>
+          <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, fontSize: size * 0.75, color: ink, letterSpacing: "-0.01em" }}>
+            Odom<span style={{ color: variant === "brand" ? ink : COLORS.purple }}>AI</span>
+          </span>
         </div>
+      );
+    }
 
-        <div class="form-group">
-            <label>Model:</label>
-            <select name="model" id="model" required>
-                <option value="">Select a Manufacturer first</option>
-            </select>
+    // ---------------------------------------------------------------------------
+    // Confidence Dial
+    // ---------------------------------------------------------------------------
+    function ConfidenceDial({ pct }) {
+      const clamped = Math.max(0, Math.min(100, pct));
+      const color   = confidenceColor(clamped);
+
+      const r  = 80, cx = 100, cy = 100;
+      const describeArc = (startAngle, endAngle) => {
+        const toRad  = (deg) => ((deg - 180) * Math.PI) / 180;
+        const start  = { x: cx + r * Math.cos(toRad(startAngle)), y: cy + r * Math.sin(toRad(startAngle)) };
+        const end    = { x: cx + r * Math.cos(toRad(endAngle)),   y: cy + r * Math.sin(toRad(endAngle)) };
+        const large  = endAngle - startAngle > 180 ? 1 : 0;
+        return `M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`;
+      };
+
+      const angle  = -90 + (clamped / 100) * 180;
+      const tipX   = cx + (r - 14) * Math.sin((angle * Math.PI) / 180);
+      const tipY   = cy - (r - 14) * Math.cos((angle * Math.PI) / 180);
+
+      return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <svg width="220" height="130" viewBox="0 0 200 115">
+            <defs>
+              <linearGradient id="odomai-gauge-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%"   stopColor={COLORS.red} />
+                <stop offset="50%"  stopColor="#D9A441" />
+                <stop offset="100%" stopColor={COLORS.green} />
+              </linearGradient>
+            </defs>
+            <path d={describeArc(0, 180)} fill="none" stroke={COLORS.gaugeLight} strokeWidth="14" strokeLinecap="round" />
+            <path d={describeArc(0, 180)} fill="none" stroke="url(#odomai-gauge-grad)" strokeWidth="14" strokeLinecap="round" opacity="0.9" />
+            <line x1={cx} y1={cy} x2={tipX} y2={tipY} stroke={COLORS.night} strokeWidth="3" strokeLinecap="round" />
+            <circle cx={cx} cy={cy} r="6" fill={COLORS.night} />
+          </svg>
+          <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 28, fontWeight: 600, color }}>{clamped}%</div>
+          <div style={{ fontSize: 12, letterSpacing: "0.02em", color: COLORS.night, opacity: 0.6 }}>AI confidence reading</div>
         </div>
+      );
+    }
 
-        <div class="form-group">
-            <label>Fuel Type:</label>
-            <select name="fuel" id="fuel" required>
-                <option value="">Loading...</option>
-            </select>
-        </div>
+    // ---------------------------------------------------------------------------
+    // Main App
+    // ---------------------------------------------------------------------------
+    function OdomAI() {
+      const [metadata, setMetadata]           = useState({ manufacturers: [], modelsByManufacturer: {}, fuelTypes: [], transmissions: [] });
+      const [metadataError, setMetadataError] = useState(null);
+      const [loadingMetadata, setLoadingMetadata] = useState(true);
 
-        <div class="form-group">
-            <label>Transmission:</label>
-            <select name="transmission" id="transmission" required>
-                <option value="">Loading...</option>
-            </select>
-        </div>
+      const [manufacturer, setManufacturer] = useState("");
+      const [model,        setModel]        = useState("");
+      const [fuel,         setFuel]         = useState("");
+      const [transmission, setTransmission] = useState("");
+      const [year,         setYear]         = useState("");
+      const [miles,        setMiles]        = useState("");
 
-        <div class="form-group">
-            <label>Year:</label>
-            <input type="number" name="year" id="year" min="1900" max="2030" value="2015" required>
-        </div>
+      const [submitting, setSubmitting] = useState(false);
+      const [result,     setResult]     = useState(null);
+      const [apiError,   setApiError]   = useState(null);
 
-        <div class="form-group">
-            <label>Odometer (Miles):</label>
-            <input type="number" name="odometer" id="odometer" min="1000" max="300000" value="50000" required>
-        </div>
+      const [readingHistory, setReadingHistory] = useState(() => {
+        try {
+          const saved = window.localStorage?.getItem("odomai_history");
+          return saved ? JSON.parse(saved) : [];
+        } catch { return []; }
+      });
 
-        <button type="submit">Predict Price</button>
-    </form>
+      // Fetch /metadata on mount
+      useEffect(() => {
+        let cancelled = false;
+        (async () => {
+          try {
+            setLoadingMetadata(true);
+            const res = await fetch(`${API_BASE}/metadata`);
+            if (!res.ok) throw new Error(`Metadata request failed (${res.status})`);
+            const raw = await res.json();
+            if (!cancelled) setMetadata(normalizeMetadata(raw));
+          } catch (err) {
+            if (!cancelled) setMetadataError(err.message || "Couldn't load make/model list.");
+          } finally {
+            if (!cancelled) setLoadingMetadata(false);
+          }
+        })();
+        return () => { cancelled = true; };
+      }, []);
 
-    <div id="result-box" class="result">
-        Estimated Value: $<span id="price-value"></span>
-    </div>
-    <div id="error-box" class="error"></div>
+      const models = useMemo(() => {
+        if (!manufacturer) return [];
+        return metadata.modelsByManufacturer[manufacturer] || [];
+      }, [manufacturer, metadata]);
 
-    <script>
-        let metadata = {};
+      const yearError = year !== "" && (!/^\d+$/.test(String(year)) || Number(year) < MIN_YEAR || Number(year) > MAX_YEAR)
+        ? `Enter a year between ${MIN_YEAR} and ${MAX_YEAR}.` : null;
 
-        async function loadMetadata() {
-            try {
-                const response = await fetch('/metadata');
-                metadata = await response.json();
+      const milesError = miles !== "" && (!/^\d+$/.test(String(miles)) || Number(miles) < 0 || Number(miles) > MAX_MILES)
+        ? `Enter mileage between 0 and ${formatMiles(MAX_MILES)}.` : null;
 
-                // Populate Manufacturers
-                const mfrSelect = document.getElementById('manufacturer');
-                mfrSelect.innerHTML = '<option value="">-- Select Manufacturer --</option>';
-                metadata.manufacturers.forEach(mfr => {
-                    const opt = document.createElement('option');
-                    opt.value = mfr;
-                    opt.textContent = mfr.charAt(0).toUpperCase() + mfr.slice(1);
-                    mfrSelect.appendChild(opt);
-                });
+      const canSubmit = manufacturer && model && fuel && transmission && year !== "" && miles !== "" && !yearError && !milesError && !submitting;
 
-                // Populate Fuels
-                const fuelSelect = document.getElementById('fuel');
-                fuelSelect.innerHTML = '';
-                metadata.fuel_types.forEach(f => {
-                    const opt = document.createElement('option');
-                    opt.value = f;
-                    opt.textContent = f.charAt(0).toUpperCase() + f.slice(1);
-                    fuelSelect.appendChild(opt);
-                });
+      const handleManufacturerChange = (e) => {
+        setManufacturer(e.target.value);
+        setModel("");
+        setResult(null);
+      };
 
-                // Populate Transmissions
-                const transSelect = document.getElementById('transmission');
-                transSelect.innerHTML = '';
-                metadata.transmissions.forEach(t => {
-                    const opt = document.createElement('option');
-                    opt.value = t;
-                    opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
-                    transSelect.appendChild(opt);
-                });
+      const handleYearChange  = (e) => setYear(e.target.value.replace(/[^\d]/g, "").slice(0, 4));
+      const handleMilesChange = (e) => setMiles(e.target.value.replace(/[^\d]/g, "").slice(0, 6));
 
-            } catch (error) {
-                document.getElementById('error-box').textContent = "Failed to load metadata. Is the server running?";
-                console.error(error);
-            }
+      const calculate = useCallback(async () => {
+        if (!canSubmit) return;
+        setSubmitting(true);
+        setApiError(null);
+        setResult(null);
+
+        const payload = {
+          manufacturer,
+          model,
+          fuel,
+          transmission,
+          year:     Number(year),
+          odometer: Number(miles),
+        };
+
+        try {
+          const res = await fetch(`${API_BASE}/predict`, {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify(payload),
+          });
+          if (!res.ok) throw new Error(`Prediction request failed (${res.status})`);
+          const data = await res.json();
+
+          const price      = data.predicted_price ?? data.price;
+          const confidence = typeof data.confidence === "number" ? data.confidence : placeholderConfidence(payload);
+
+          if (typeof price !== "number") throw new Error("No price came back from the model.");
+
+          const reading = { ...payload, price, confidence, timestamp: new Date().toISOString() };
+          setResult(reading);
+
+          setReadingHistory((prev) => {
+            const next = [reading, ...prev].slice(0, 8);
+            try { window.localStorage?.setItem("odomai_history", JSON.stringify(next)); } catch {}
+            return next;
+          });
+        } catch (err) {
+          setApiError(err.message || "Something went wrong getting a reading.");
+        } finally {
+          setSubmitting(false);
         }
+      }, [canSubmit, manufacturer, model, fuel, transmission, year, miles]);
 
-        document.getElementById('manufacturer').addEventListener('change', function(e) {
-            const mfr = e.target.value;
-            const modelSelect = document.getElementById('model');
-            modelSelect.innerHTML = '<option value="">-- Select Model --</option>';
+      // ── Styles ──────────────────────────────────────────────────────────────
+      const S = {
+        page:       { minHeight: "100vh", background: COLORS.gaugeLight, color: COLORS.night, fontFamily: "'Inter', system-ui, sans-serif", display: "flex", flexDirection: "column" },
+        header:     { padding: "28px 24px 20px", display: "flex", flexDirection: "column", gap: 8, maxWidth: 760, margin: "0 auto", width: "100%" },
+        tagline:    { margin: 0, fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, color: COLORS.night, opacity: 0.85 },
+        main:       { flex: 1, maxWidth: 760, margin: "0 auto", width: "100%", padding: "0 24px 48px", display: "flex", flexDirection: "column", gap: 20 },
+        card:       { background: COLORS.white, borderRadius: 16, padding: 24, boxShadow: "0 1px 2px rgba(15,11,38,0.06)", border: `1px solid ${COLORS.dial}33` },
+        cardTitle:  { margin: "0 0 16px", fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, fontWeight: 600 },
+        formGrid:   { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
+        field:      { display: "flex", flexDirection: "column", gap: 6 },
+        label:      { fontSize: 13, color: COLORS.night, opacity: 0.7 },
+        select:     { padding: "10px 12px", borderRadius: 10, border: `1px solid ${COLORS.dial}66`, background: COLORS.gaugeLight, fontSize: 15, color: COLORS.night },
+        input:      { padding: "10px 12px", borderRadius: 10, border: `1px solid ${COLORS.dial}66`, background: COLORS.gaugeLight, fontSize: 15, color: COLORS.night },
+        inputError: { border: `1px solid ${COLORS.red}` },
+        errorText:  { color: COLORS.red, fontSize: 12 },
+        warnText:   { color: COLORS.red, fontSize: 13, marginTop: 12 },
+        mutedText:  { color: COLORS.night, opacity: 0.6, fontSize: 14 },
+        button:     { marginTop: 20, width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: COLORS.purple, color: COLORS.white, fontSize: 16, fontWeight: 600, cursor: "pointer" },
+        resultCard: { background: COLORS.night, borderRadius: 16, padding: 28, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 20 },
+        priceBlock: { display: "flex", flexDirection: "column", gap: 4 },
+        priceLabel: { color: COLORS.dial, fontSize: 13 },
+        price:      { fontFamily: "'Fraunces', Georgia, serif", fontSize: 48, fontWeight: 700, color: COLORS.white, lineHeight: 1.05 },
+        priceSub:   { color: COLORS.dial, fontSize: 14 },
+        historyCard:      { background: COLORS.white, borderRadius: 16, padding: 24, border: `1px solid ${COLORS.dial}33` },
+        historyTableWrap: { overflowX: "auto" },
+        historyTable:     { width: "100%", borderCollapse: "collapse", fontSize: 14 },
+        th: { textAlign: "left", padding: "8px 10px", color: COLORS.night, opacity: 0.6, fontWeight: 500, borderBottom: `1px solid ${COLORS.dial}55` },
+        td: { padding: "10px 10px", borderBottom: `1px solid ${COLORS.dial}33` },
+        footer:     { padding: "20px 24px 32px", maxWidth: 760, margin: "0 auto", width: "100%", display: "flex", alignItems: "center", gap: 10 },
+        footerText: { fontSize: 13, opacity: 0.55 },
+      };
 
-            if (mfr && metadata.models_by_manufacturer[mfr]) {
-                metadata.models_by_manufacturer[mfr].forEach(mod => {
-                    const opt = document.createElement('option');
-                    opt.value = mod;
-                    opt.textContent = mod.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-                    modelSelect.appendChild(opt);
-                });
-            }
-        });
+      return (
+        <div style={S.page}>
+          <header style={S.header}>
+            <Logo variant="light" size={30} />
+            <p style={S.tagline}>{TAGLINE}</p>
+          </header>
 
-        document.getElementById('predict-form').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const resultBox = document.getElementById('result-box');
-            const errorBox = document.getElementById('error-box');
-            const priceValue = document.getElementById('price-value');
-            const submitBtn = this.querySelector('button[type="submit"]');
-            
-            resultBox.style.display = 'none';
-            errorBox.textContent = '';
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Predicting...';
-            
-            const formData = {
-                manufacturer: document.getElementById('manufacturer').value,
-                model: document.getElementById('model').value,
-                fuel: document.getElementById('fuel').value,
-                transmission: document.getElementById('transmission').value,
-                year: parseInt(document.getElementById('year').value),
-                odometer: parseFloat(document.getElementById('odometer').value)
-            };
+          <main style={S.main}>
+            {/* ── Input card ── */}
+            <section style={S.card}>
+              <h2 style={S.cardTitle}>Take a reading</h2>
 
-            try {
-                const response = await fetch('/predict', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(formData)
-                });
-                
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    errorBox.textContent = data.error || 'Prediction failed';
-                } else {
-                    priceValue.textContent = data.predicted_price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-                    resultBox.style.display = 'block';
-                }
-            } catch (error) {
-                errorBox.textContent = "Request failed. Check console.";
-                console.error(error);
-            } finally {
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Predict Price';
-            }
-        });
+              <div style={S.formGrid}>
+                {/* Manufacturer */}
+                <label style={S.field}>
+                  <span style={S.label}>Manufacturer</span>
+                  <select style={S.select} value={manufacturer} onChange={handleManufacturerChange} disabled={loadingMetadata}>
+                    <option value="">{loadingMetadata ? "Loading…" : "Select manufacturer"}</option>
+                    {metadata.manufacturers.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </label>
 
-        // Initialize on load
-        window.onload = loadMetadata;
-    </script>
+                {/* Model */}
+                <label style={S.field}>
+                  <span style={S.label}>Model</span>
+                  <select style={S.select} value={model} onChange={(e) => setModel(e.target.value)} disabled={!manufacturer}>
+                    <option value="">{manufacturer ? "Select model" : "Pick a manufacturer first"}</option>
+                    {models.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </label>
+
+                {/* Fuel Type */}
+                <label style={S.field}>
+                  <span style={S.label}>Fuel Type</span>
+                  <select style={S.select} value={fuel} onChange={(e) => setFuel(e.target.value)} disabled={loadingMetadata}>
+                    <option value="">Select fuel type</option>
+                    {metadata.fuelTypes.map((f) => (
+                      <option key={f} value={f}>{f.charAt(0).toUpperCase() + f.slice(1)}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {/* Transmission */}
+                <label style={S.field}>
+                  <span style={S.label}>Transmission</span>
+                  <select style={S.select} value={transmission} onChange={(e) => setTransmission(e.target.value)} disabled={loadingMetadata}>
+                    <option value="">Select transmission</option>
+                    {metadata.transmissions.map((t) => (
+                      <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {/* Year */}
+                <label style={S.field}>
+                  <span style={S.label}>Year</span>
+                  <input
+                    style={{ ...S.input, ...(yearError ? S.inputError : {}) }}
+                    type="number" inputMode="numeric"
+                    placeholder={`e.g. ${CURRENT_YEAR - 3}`}
+                    value={year} onChange={handleYearChange}
+                  />
+                  {yearError && <span style={S.errorText}>{yearError}</span>}
+                </label>
+
+                {/* Miles (odometer) */}
+                <label style={S.field}>
+                  <span style={S.label}>Miles</span>
+                  <input
+                    style={{ ...S.input, ...(milesError ? S.inputError : {}) }}
+                    type="number" inputMode="numeric"
+                    placeholder="e.g. 42000"
+                    value={miles} onChange={handleMilesChange}
+                  />
+                  {milesError && <span style={S.errorText}>{milesError}</span>}
+                </label>
+              </div>
+
+              {metadataError && <p style={S.warnText}>{metadataError} — you can still type once the list loads.</p>}
+
+              <button style={{ ...S.button, opacity: canSubmit ? 1 : 0.5 }} onClick={calculate} disabled={!canSubmit}>
+                {submitting ? "Reading the gauges…" : "Calculate price"}
+              </button>
+
+              {apiError && <p style={S.errorText}>{apiError}</p>}
+            </section>
+
+            {/* ── Result card ── */}
+            {result && (
+              <section style={S.resultCard}>
+                <div style={S.priceBlock}>
+                  <span style={S.priceLabel}>Estimated value</span>
+                  <span style={S.price}>{formatCurrency(result.price)}</span>
+                  <span style={S.priceSub}>
+                    {result.year} {result.manufacturer} {result.model} · {formatMiles(result.odometer)} mi · {result.fuel} · {result.transmission}
+                  </span>
+                </div>
+                <ConfidenceDial pct={result.confidence} />
+              </section>
+            )}
+
+            {/* ── History card ── */}
+            <section style={S.historyCard}>
+              <h2 style={S.cardTitle}>Reading history</h2>
+              {readingHistory.length === 0 ? (
+                <p style={S.mutedText}>Past readings will show up here after your first calculation.</p>
+              ) : (
+                <div style={S.historyTableWrap}>
+                  <table style={S.historyTable}>
+                    <thead>
+                      <tr>
+                        <th style={S.th}>Vehicle</th>
+                        <th style={S.th}>Year</th>
+                        <th style={S.th}>Miles</th>
+                        <th style={S.th}>Fuel</th>
+                        <th style={S.th}>Trans.</th>
+                        <th style={S.th}>Price</th>
+                        <th style={S.th}>Confidence</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {readingHistory.map((r, i) => (
+                        <tr key={i}>
+                          <td style={S.td}>{r.manufacturer} {r.model}</td>
+                          <td style={S.td}>{r.year}</td>
+                          <td style={S.td}>{formatMiles(r.odometer)}</td>
+                          <td style={S.td}>{r.fuel}</td>
+                          <td style={S.td}>{r.transmission}</td>
+                          <td style={S.td}>{formatCurrency(r.price)}</td>
+                          <td style={{ ...S.td, color: confidenceColor(r.confidence), fontWeight: 600 }}>{r.confidence}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </main>
+
+          <footer style={S.footer}>
+            <Logo variant="light" size={18} />
+            <span style={S.footerText}>Gauges, not guesswork.</span>
+          </footer>
+        </div>
+      );
+    }
+
+    // Mount
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<OdomAI />);
+  </script>
 </body>
 </html>

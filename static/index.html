@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Price Predictor Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; max-width: 500px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        select, input { width: 100%; padding: 8px; box-sizing: border-box; }
+        button { padding: 10px 15px; background-color: #007BFF; color: white; border: none; cursor: pointer; font-size: 1em; }
+        button:hover { background-color: #0056b3; }
+        .result { margin-top: 20px; padding: 15px; background-color: #e9ecef; font-size: 1.2em; font-weight: bold; display: none; }
+        .error { color: red; margin-top: 20px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h2>Used Car Price Predictor (Static)</h2>
+
+    <form id="predict-form">
+
+        <div class="form-group">
+            <label>Manufacturer:</label>
+            <select name="manufacturer" id="manufacturer" required>
+                <option value="">Loading...</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Model:</label>
+            <select name="model" id="model" required>
+                <option value="">Select a Manufacturer first</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Fuel Type:</label>
+            <select name="fuel" id="fuel" required>
+                <option value="">Loading...</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Transmission:</label>
+            <select name="transmission" id="transmission" required>
+                <option value="">Loading...</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Year:</label>
+            <input type="number" name="year" id="year" min="1900" max="2030" value="2015" required>
+        </div>
+
+        <div class="form-group">
+            <label>Odometer (Miles):</label>
+            <input type="number" name="odometer" id="odometer" min="1000" max="300000" value="50000" required>
+        </div>
+
+        <button type="submit">Predict Price</button>
+    </form>
+
+    <div id="result-box" class="result">
+        Estimated Value: $<span id="price-value"></span>
+    </div>
+    <div id="error-box" class="error"></div>
+
+    <script>
+        let metadata = {};
+
+        async function loadMetadata() {
+            try {
+                const response = await fetch('/metadata');
+                metadata = await response.json();
+
+                // Populate Manufacturers
+                const mfrSelect = document.getElementById('manufacturer');
+                mfrSelect.innerHTML = '<option value="">-- Select Manufacturer --</option>';
+                metadata.manufacturers.forEach(mfr => {
+                    const opt = document.createElement('option');
+                    opt.value = mfr;
+                    opt.textContent = mfr.charAt(0).toUpperCase() + mfr.slice(1);
+                    mfrSelect.appendChild(opt);
+                });
+
+                // Populate Fuels
+                const fuelSelect = document.getElementById('fuel');
+                fuelSelect.innerHTML = '';
+                metadata.fuel_types.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f;
+                    opt.textContent = f.charAt(0).toUpperCase() + f.slice(1);
+                    fuelSelect.appendChild(opt);
+                });
+
+                // Populate Transmissions
+                const transSelect = document.getElementById('transmission');
+                transSelect.innerHTML = '';
+                metadata.transmissions.forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t;
+                    opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+                    transSelect.appendChild(opt);
+                });
+
+            } catch (error) {
+                document.getElementById('error-box').textContent = "Failed to load metadata. Is the server running?";
+                console.error(error);
+            }
+        }
+
+        document.getElementById('manufacturer').addEventListener('change', function(e) {
+            const mfr = e.target.value;
+            const modelSelect = document.getElementById('model');
+            modelSelect.innerHTML = '<option value="">-- Select Model --</option>';
+
+            if (mfr && metadata.models_by_manufacturer[mfr]) {
+                metadata.models_by_manufacturer[mfr].forEach(mod => {
+                    const opt = document.createElement('option');
+                    opt.value = mod;
+                    opt.textContent = mod.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                    modelSelect.appendChild(opt);
+                });
+            }
+        });
+
+        document.getElementById('predict-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const resultBox = document.getElementById('result-box');
+            const errorBox = document.getElementById('error-box');
+            const priceValue = document.getElementById('price-value');
+            const submitBtn = this.querySelector('button[type="submit"]');
+            
+            resultBox.style.display = 'none';
+            errorBox.textContent = '';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Predicting...';
+            
+            const formData = {
+                manufacturer: document.getElementById('manufacturer').value,
+                model: document.getElementById('model').value,
+                fuel: document.getElementById('fuel').value,
+                transmission: document.getElementById('transmission').value,
+                year: parseInt(document.getElementById('year').value),
+                odometer: parseFloat(document.getElementById('odometer').value)
+            };
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    errorBox.textContent = data.error || 'Prediction failed';
+                } else {
+                    priceValue.textContent = data.predicted_price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    resultBox.style.display = 'block';
+                }
+            } catch (error) {
+                errorBox.textContent = "Request failed. Check console.";
+                console.error(error);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Predict Price';
+            }
+        });
+
+        // Initialize on load
+        window.onload = loadMetadata;
+    </script>
+</body>
+</html>

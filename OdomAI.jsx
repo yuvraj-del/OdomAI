@@ -293,7 +293,11 @@ export default function OdomAI() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`Prediction request failed (${res.status})`);
+      if (!res.ok) {
+        let errMsg = `Prediction request failed (${res.status})`;
+        try { const e = await res.json(); if (e.error) errMsg = e.error; } catch {}
+        throw new Error(errMsg);
+      }
       const data = await res.json();
 
       const price = data.predicted_price ?? data.price;
@@ -320,7 +324,7 @@ export default function OdomAI() {
     } finally {
       setSubmitting(false);
     }
-  }, [canSubmit, manufacturer, model, year, miles]);
+  }, [canSubmit, manufacturer, model, fuel, transmission, year, miles]);
 
   return (
     <div style={styles.page}>

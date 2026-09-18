@@ -1,11 +1,25 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 import joblib
 import pandas as pd
 import numpy as np
+import uuid
+import os
+from dotenv import load_dotenv
+from db import init_db, close_db, create_user_if_new, save_car, get_user_cars
+
+load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Allows your React frontend (different origin) to call this API
+# Allows your React frontend (different origin) to call this API with credentials
+CORS(app, supports_credentials=True, origins=["http://localhost:5173", "https://odomai.onrender.com"])
+
+# Initialize DB at startup
+init_db()
+
+@app.teardown_appcontext
+def teardown_db(exception):
+    close_db(exception)
 
 # ============================================
 # Load model artifacts once at startup
@@ -32,6 +46,15 @@ try:
 except FileNotFoundError:
     MFR_MODELS = {}
     print("WARNING: vehicles_clean.csv not found — /metadata will return empty options.")
+
+def get_or_create_user_id():
+    """Reads the user_id cookie, or generates a new one if missing."""
+    user_id = request.cookies.get('user_id')
+    is_new = False
+    if not user_id:
+        user_id = str(uuid.uuid4())
+        is_new = True
+    return user_id, is_new
 
 
 @app.route('/health', methods=['GET'])
@@ -125,8 +148,27 @@ def predict():
     except Exception as e:
         return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
-    return jsonify({
-        "predicted_price": round(predicted_price, 2),
+    rounded_price = round(predicted_price, 2)
+    
+    user_id, is_new_user = get_or_create_user_id()
+    
+    try:
+        create_user_if_new(user_id)
+        save_car(
+            user_id=user_id,
+            make=manufacturer,
+            model=model_name,
+            year=year,
+            mileage=odometer,
+            condition=None,
+            predicted_price=rounded_price
+        )
+    except Exception as e:
+        print(f"WARNING: Failed to save car history: {e}")
+        # Don't fail the prediction if history fails
+
+    response = jsonify({
+        "predicted_price": rounded_price,
         "input": {
             "manufacturer": manufacturer,
             "model": model_name,
@@ -136,6 +178,32 @@ def predict():
             "odometer": odometer
         }
     })
+    
+    if is_new_user:
+        response.set_cookie(
+            'user_id', 
+            user_id, 
+            max_age=60*60*24*365, 
+            secure=True, 
+            httponly=True, 
+            samesite='None'
+        )
+
+    return response
+
+@app.route('/cars', methods=['GET'])
+def get_cars():
+    """Returns the reading history for the current user based on cookie."""
+    user_id = request.cookies.get('user_id')
+    if not user_id:
+        return jsonify([])
+    
+    try:
+        cars = get_user_cars(user_id)
+        # RealDictRow is usually fine, but cast to dict for safety with jsonify
+        return jsonify([dict(c) for c in cars])
+    except Exception as e:
+        return jsonify({"error": f"Failed to retrieve cars: {str(e)}"}), 500
 
 @app.route('/', methods=['GET'])
 def index():

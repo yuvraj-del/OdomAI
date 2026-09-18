@@ -206,17 +206,40 @@ export default function OdomAI() {
   const [result, setResult] = useState(null); // { price, confidence }
   const [apiError, setApiError] = useState(null);
 
-  // Reading history — local for now. Swap the setter below for a fetch to a
-  // future GET {API_BASE}/history endpoint backed by the SQL history table,
-  // and drop the localStorage persistence once the backend owns this.
-  const [readingHistory, setReadingHistory] = useState(() => {
+  // Reading history is now backed by the SQL history table
+  const [currentView, setCurrentView] = useState("predict"); // 'predict' or 'history'
+  const [readingHistory, setReadingHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  const fetchHistory = useCallback(async () => {
+    setLoadingHistory(true);
     try {
-      const saved = window.localStorage?.getItem("odomai_history");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
+      const res = await fetch(`${API_BASE}/cars`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        const normalized = data.map((r) => ({
+          manufacturer: r.make,
+          model: r.model,
+          year: r.year,
+          odometer: r.mileage,
+          price: r.predicted_price,
+          confidence: placeholderConfidence({ year: r.year, miles: r.mileage }),
+          created_at: r.created_at,
+        }));
+        setReadingHistory(normalized);
+      }
+    } catch (err) {
+      console.error("Failed to fetch history", err);
+    } finally {
+      setLoadingHistory(false);
     }
-  });
+  }, []);
+
+  useEffect(() => {
+    if (currentView === "history") {
+      fetchHistory();
+    }
+  }, [currentView, fetchHistory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -291,6 +314,7 @@ export default function OdomAI() {
       const res = await fetch(`${API_BASE}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -310,15 +334,7 @@ export default function OdomAI() {
       const reading = { ...payload, price, confidence, timestamp: new Date().toISOString() };
       setResult(reading);
 
-      setReadingHistory((prev) => {
-        const next = [reading, ...prev].slice(0, 8);
-        try {
-          window.localStorage?.setItem("odomai_history", JSON.stringify(next));
-        } catch {
-          /* localStorage unavailable — history just won't persist */
-        }
-        return next;
-      });
+      // History is now saved on the backend and fetched on demand.
     } catch (err) {
       setApiError(err.message || "Something went wrong getting a reading.");
     } finally {
@@ -331,13 +347,31 @@ export default function OdomAI() {
       <style>{FONT_IMPORT}</style>
 
       <header style={styles.header}>
-        <Logo variant="light" size={30} />
+        <div style={styles.headerTop}>
+          <Logo variant="light" size={30} />
+          <nav style={styles.nav}>
+            <button
+              style={currentView === "predict" ? styles.navActive : styles.navButton}
+              onClick={() => setCurrentView("predict")}
+            >
+              Predict
+            </button>
+            <button
+              style={currentView === "history" ? styles.navActive : styles.navButton}
+              onClick={() => setCurrentView("history")}
+            >
+              My Cars
+            </button>
+          </nav>
+        </div>
         <p style={styles.tagline}>{TAGLINE}</p>
       </header>
 
       <main style={styles.main}>
-        <section style={styles.card}>
-          <h2 style={styles.cardTitle}>Take a reading</h2>
+        {currentView === "predict" ? (
+          <>
+            <section style={styles.card}>
+              <h2 style={styles.cardTitle}>Take a reading</h2>
 
           <div style={styles.formGrid}>
             <label style={styles.field}>
@@ -456,15 +490,20 @@ export default function OdomAI() {
             <ConfidenceDial pct={result.confidence} />
           </section>
         )}
-
-        <section style={styles.historyCard}>
-          <h2 style={styles.cardTitle}>Reading history</h2>
-          {readingHistory.length === 0 ? (
-            <p style={styles.mutedText}>
-              Past readings will show up here. Once the backend's SQL history table is exposed through an
-              endpoint, this panel is the spot to swap in.
-            </p>
-          ) : (
+          </>
+        ) : (
+          <section style={styles.historyCard}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h2 style={{ ...styles.cardTitle, margin: 0 }}>My Cars</h2>
+              <button style={styles.refreshButton} onClick={fetchHistory} disabled={loadingHistory}>
+                {loadingHistory ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+            {readingHistory.length === 0 ? (
+              <p style={styles.mutedText}>
+                {loadingHistory ? "Loading your history..." : "No saved cars yet. Take a reading to start tracking!"}
+              </p>
+            ) : (
             <div style={styles.historyTableWrap}>
               <table style={styles.historyTable}>
                 <thead>
@@ -493,8 +532,9 @@ export default function OdomAI() {
                 </tbody>
               </table>
             </div>
-          )}
-        </section>
+            )}
+          </section>
+        )}
       </main>
 
       <footer style={styles.footer}>
@@ -528,6 +568,41 @@ const styles = {
     margin: "0 auto",
     width: "100%",
     boxSizing: "border-box",
+  },
+  headerTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    width: "100%",
+  },
+  nav: {
+    display: "flex",
+    gap: 8,
+    background: COLORS.white,
+    padding: 4,
+    borderRadius: 20,
+    border: `1px solid ${COLORS.dial}33`,
+  },
+  navButton: {
+    padding: "6px 14px",
+    borderRadius: 16,
+    border: "none",
+    background: "transparent",
+    color: COLORS.night,
+    opacity: 0.7,
+    fontSize: 14,
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  navActive: {
+    padding: "6px 14px",
+    borderRadius: 16,
+    border: "none",
+    background: COLORS.gaugeLight,
+    color: COLORS.night,
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: "default",
   },
   tagline: {
     margin: 0,
@@ -626,6 +701,16 @@ const styles = {
     border: `1px solid ${COLORS.dial}33`,
   },
   historyTableWrap: { overflowX: "auto" },
+  refreshButton: {
+    padding: "6px 12px",
+    borderRadius: 8,
+    border: `1px solid ${COLORS.dial}`,
+    background: COLORS.white,
+    color: COLORS.night,
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: "pointer",
+  },
   historyTable: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
   th: {
     textAlign: "left",

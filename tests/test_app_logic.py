@@ -1,6 +1,12 @@
 import unittest
 
-from backend.app import apply_luxury_price_adjustment, compute_confidence
+from backend.app import (
+    CONFIDENCE_LIMITS,
+    MODEL_LISTING_COUNTS,
+    RARE_MODEL_MAX_LISTINGS,
+    apply_luxury_price_adjustment,
+    compute_confidence,
+)
 
 
 class AppLogicRegressionTests(unittest.TestCase):
@@ -30,15 +36,23 @@ class AppLogicRegressionTests(unittest.TestCase):
         self.assertEqual(apply_luxury_price_adjustment(10000, 'nissan', 'versa'), 10000.0)
         self.assertEqual(apply_luxury_price_adjustment(10000, 'nissan', 'traverse'), 10000.0)
 
-    def test_confidence_prefers_mainstream_midrange(self):
-        mainstream = compute_confidence(2012, 110000)
-        new_low_mileage = compute_confidence(2024, 1000)
-        old_high_mileage = compute_confidence(1996, 300000)
+    def test_confidence_falls_with_age_and_mileage(self):
+        self.assertGreater(compute_confidence(2020, 30000), compute_confidence(2012, 120000))
+        self.assertGreater(compute_confidence(2012, 120000), compute_confidence(1998, 200000))
+        self.assertGreater(compute_confidence(2015, 40000), compute_confidence(2015, 200000))
 
-        self.assertGreater(mainstream, new_low_mileage)
-        self.assertGreater(mainstream, old_high_mileage)
-        self.assertGreaterEqual(mainstream, 80)
-        self.assertLessEqual(mainstream, 96)
+    def test_confidence_is_lower_for_cars_newer_than_the_training_data(self):
+        self.assertLess(compute_confidence(2026, 5000), compute_confidence(2020, 5000))
+        self.assertLess(compute_confidence(2026, 5000), compute_confidence(2024, 5000))
+
+    def test_confidence_is_lower_for_rare_models(self):
+        common = next(m for m, n in MODEL_LISTING_COUNTS.items() if n >= 500)
+        rare = next(m for m, n in MODEL_LISTING_COUNTS.items() if n < RARE_MODEL_MAX_LISTINGS)
+        self.assertLess(compute_confidence(2012, 100000, rare), compute_confidence(2012, 100000, common))
+
+    def test_confidence_stays_within_limits(self):
+        for year, miles in [(1995, 300000), (2026, 1000), (2012, 100000)]:
+            self.assertTrue(CONFIDENCE_LIMITS[0] <= compute_confidence(year, miles) <= CONFIDENCE_LIMITS[1])
 
     def test_progressive_price_reducer_hits_target_ranges(self):
         self.assertAlmostEqual(apply_luxury_price_adjustment(15000, 'toyota', 'corolla'), 15000.0, places=2)

@@ -74,10 +74,19 @@ LUXURY_MANUFACTURER_ALIASES = {
     'range rover': {'range rover', 'range-rover', 'rangerover'},
     'land rover': {'land rover', 'land-rover', 'landrover'},
 }
-MAINSTREAM_AGE_CENTER = 9.0
-MAINSTREAM_ODOMETER_CENTER = 70000.0
-MAINSTREAM_AGE_SPREAD = 12.0
-MAINSTREAM_ODOMETER_SPREAD = 90000.0
+
+# Confidence = estimated % chance the estimate lands within +/-20% of the typical listing price.
+# Coefficients come from a linear fit on ~20k held-out listings the model never trained on:
+# older, higher-mileage and rarer-model cars are estimated less accurately.
+CONFIDENCE_BASE = 87.0
+CONFIDENCE_PER_YEAR_OF_AGE = 1.7
+CONFIDENCE_PER_10K_MILES = 0.15
+CONFIDENCE_RARE_MODEL_PENALTY = 7.0
+RARE_MODEL_MAX_LISTINGS = 120        # models with fewer training listings count as rare
+CONFIDENCE_AGE_RANGE = (5, 30)       # the data is thin outside this age range
+# Heuristic, not fitted: the data has almost no cars under 5 years old, so newer cars are extrapolation.
+CONFIDENCE_PER_YEAR_BELOW_DATA = 6.0
+CONFIDENCE_LIMITS = (10, 90)
 
 try:
     df_clean = pd.read_csv(MODELS_DIR / 'vehicles_clean.csv')
@@ -87,17 +96,10 @@ try:
         .apply(lambda arr: sorted(arr.tolist()))
         .to_dict()
     )
-    if not df_clean.empty:
-        df_clean = df_clean.dropna(subset=['year', 'odometer']).copy()
-        df_clean['age'] = np.maximum(0, TRAINING_REFERENCE_YEAR - df_clean['year'].astype(float))
-        MAINSTREAM_AGE_CENTER = float(df_clean['age'].median())
-        MAINSTREAM_ODOMETER_CENTER = float(df_clean['odometer'].astype(float).median())
-        age_q1, age_q3 = df_clean['age'].quantile([0.25, 0.75])
-        miles_q1, miles_q3 = df_clean['odometer'].astype(float).quantile([0.25, 0.75])
-        MAINSTREAM_AGE_SPREAD = max(float(age_q3 - age_q1), 10.0)
-        MAINSTREAM_ODOMETER_SPREAD = max(float(miles_q3 - miles_q1), 50000.0)
+    MODEL_LISTING_COUNTS = df_clean['model'].value_counts().to_dict()
 except FileNotFoundError:
     MFR_MODELS = {}
+    MODEL_LISTING_COUNTS = {}
     logger.error("vehicles_clean.csv not found — /metadata will return empty options.")
 
 
@@ -138,14 +140,22 @@ def get_or_create_user_id():
     return user_id, is_new
 
 
-def compute_confidence(year, odometer):
+def compute_confidence(year, odometer, model_name=None):
+    """Estimated % chance the price estimate is within +/-20% of the typical listing price."""
     age = max(0, TRAINING_REFERENCE_YEAR - int(year))
     mileage = max(0.0, float(odometer))
+    is_rare_model = MODEL_LISTING_COUNTS.get(str(model_name).lower().strip(), RARE_MODEL_MAX_LISTINGS) < RARE_MODEL_MAX_LISTINGS
 
-    age_distance = abs(age - MAINSTREAM_AGE_CENTER) / max(MAINSTREAM_AGE_SPREAD, 1.0)
-    mileage_distance = abs(mileage - MAINSTREAM_ODOMETER_CENTER) / max(MAINSTREAM_ODOMETER_SPREAD, 1.0)
-    score = 100.0 - (age_distance * 70.0) - (mileage_distance * 50.0)
-    return int(max(38, min(96, round(score))))
+    min_age, max_age = CONFIDENCE_AGE_RANGE
+    score = (
+        CONFIDENCE_BASE
+        - CONFIDENCE_PER_YEAR_OF_AGE * min(max(age, min_age), max_age)
+        - CONFIDENCE_PER_10K_MILES * (mileage / 10000.0)
+        - (CONFIDENCE_RARE_MODEL_PENALTY if is_rare_model else 0.0)
+        - CONFIDENCE_PER_YEAR_BELOW_DATA * max(0, min_age - age)
+    )
+    low, high = CONFIDENCE_LIMITS
+    return int(max(low, min(high, round(score))))
 
 
 def apply_progressive_price_reduction(predicted_price):
@@ -267,7 +277,7 @@ def predict():
         return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
     adjusted_price = apply_luxury_price_adjustment(predicted_price, manufacturer, model_name)
-    confidence = compute_confidence(year, odometer)
+    confidence = compute_confidence(year, odometer, model_name)
     rounded_price = round(adjusted_price, 2)
 
     user_id, is_new_user = get_or_create_user_id()
@@ -322,10 +332,10 @@ def get_cars():
 
     try:
         cars = [dict(c) for c in get_user_cars(user_id)]
-        # Rows saved before confidence was stored get the same formula /predict uses.
+        # Always recompute with the current formula so history matches what /predict shows,
+        # including rows saved before the formula changed or before confidence was stored.
         for car in cars:
-            if car.get('confidence') is None:
-                car['confidence'] = compute_confidence(car['year'], car['mileage'])
+            car['confidence'] = compute_confidence(car['year'], car['mileage'], car['model'])
         return jsonify(cars)
     except Exception as e:
         return jsonify({"error": f"Failed to retrieve cars: {str(e)}"}), 500

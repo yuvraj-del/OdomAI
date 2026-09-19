@@ -148,7 +148,25 @@ def compute_confidence(year, odometer):
     return int(max(38, min(96, round(score))))
 
 
+def apply_progressive_price_reduction(predicted_price):
+    price = float(predicted_price)
+    if price <= 15000:
+        return price
+    if price <= 25000:
+        # Continuous from 0% at $15,000 to 30% at $25,000.
+        reduction_rate = 0.30 * ((price - 15000.0) / 10000.0)
+    elif price <= 40000:
+        reduction_rate = 0.30 + ((price - 25000.0) / 15000.0) * 0.06
+    else:
+        reduction_rate = 0.36 + min(0.12, ((price - 40000.0) / 50000.0) * 0.12)
+    reduction_rate = max(0.0, min(reduction_rate, 0.48))
+    return price * (1.0 - reduction_rate)
+
+
 def apply_luxury_price_adjustment(predicted_price, manufacturer, model_name):
+    # Order: luxury brand/model adjustment first, then the market-wide progressive price reduction.
+    # This keeps the luxury factor as a brand-level modifier while the progressive curve remains a
+    # single continuous cap for all vehicles above $15k, including non-luxury trucks.
     manufacturer_key = canonicalize_manufacturer(manufacturer)
     model_norm = str(model_name).lower().strip()
 
@@ -156,12 +174,13 @@ def apply_luxury_price_adjustment(predicted_price, manufacturer, model_name):
         multiplier = LUXURY_MULTIPLIERS.get(manufacturer_key, 0.82)
         if has_luxury_model_bump(model_norm):
             multiplier *= 0.92
-        return float(predicted_price) * multiplier
+        adjusted = float(predicted_price) * multiplier
+    elif any(contains_model_phrase(model_norm, token) for token in ['luxury', 'rs', 'amg', 's class', '7 series', 'x5', 'g class', 'm series']):
+        adjusted = float(predicted_price) * 0.88
+    else:
+        adjusted = float(predicted_price)
 
-    if any(contains_model_phrase(model_norm, token) for token in ['luxury', 'rs', 'amg', 's class', '7 series', 'x5', 'g class', 'm series']):
-        return float(predicted_price) * 0.88
-
-    return float(predicted_price)
+    return apply_progressive_price_reduction(adjusted)
 
 
 @app.route('/health', methods=['GET'])

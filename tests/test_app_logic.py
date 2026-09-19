@@ -40,6 +40,12 @@ class AppLogicRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(mainstream, 80)
         self.assertLessEqual(mainstream, 96)
 
+    def test_progressive_price_reducer_hits_target_ranges(self):
+        self.assertAlmostEqual(apply_luxury_price_adjustment(15000, 'toyota', 'corolla'), 15000.0, places=2)
+        self.assertGreater(apply_luxury_price_adjustment(15001, 'toyota', 'corolla'), 15000.0)
+        self.assertAlmostEqual(apply_luxury_price_adjustment(20000, 'toyota', 'corolla'), 17000.0, places=1)
+        self.assertAlmostEqual(apply_luxury_price_adjustment(40000, 'toyota', 'corolla'), 25600.0, places=1)
+
 
 if __name__ == '__main__':
     unittest.main()

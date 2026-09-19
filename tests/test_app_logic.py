@@ -1,6 +1,5 @@
 import unittest
 from unittest import mock
-
 from backend import app as app_module
 from backend.app import (
     CONFIDENCE_BOOST,

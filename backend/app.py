@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify
@@ -34,19 +35,22 @@ target_encoder = joblib.load(MODELS_DIR / 'target_encoder.pkl')
 model_columns = joblib.load(MODELS_DIR / 'model_columns.pkl')
 
 TRAINING_REFERENCE_YEAR = 2026
-MIN_YEAR = 1980
-MAX_YEAR = datetime.now().year + 1
+MIN_YEAR = 1995
+MAX_YEAR = 2024
+MIN_ODOMETER = 1000
+MAX_ODOMETER = 300000
 ALLOWED_FUEL_TYPES = {"gas", "diesel", "hybrid", "electric"}
 ALLOWED_TRANSMISSIONS = {"automatic", "manual"}
 
 LUXURY_MANUFACTURERS = {
-    'bmw', 'mercedes', 'audi', 'porsche', 'cadillac', 'lexus', 'infiniti', 'acura',
+    'bmw', 'mercedes', 'mercedes-benz', 'audi', 'porsche', 'cadillac', 'lexus', 'infiniti', 'acura',
     'jaguar', 'land rover', 'range rover', 'maserati', 'genesis', 'mini', 'tesla',
-    'volvo', 'alfa romeo'
+    'volvo', 'alfa romeo', 'alfa-romeo'
 }
 LUXURY_MULTIPLIERS = {
     'bmw': 0.76,
     'mercedes': 0.72,
+    'mercedes-benz': 0.72,
     'audi': 0.75,
     'porsche': 0.70,
     'cadillac': 0.78,
@@ -62,7 +66,18 @@ LUXURY_MULTIPLIERS = {
     'volvo': 0.86,
     'mini': 0.88,
     'alfa romeo': 0.80,
+    'alfa-romeo': 0.80,
 }
+LUXURY_MANUFACTURER_ALIASES = {
+    'mercedes-benz': {'mercedes-benz', 'mercedes benz', 'mercedes'},
+    'alfa-romeo': {'alfa-romeo', 'alfa romeo', 'alfa'},
+    'range rover': {'range rover', 'range-rover', 'rangerover'},
+    'land rover': {'land rover', 'land-rover', 'landrover'},
+}
+MAINSTREAM_AGE_CENTER = 9.0
+MAINSTREAM_ODOMETER_CENTER = 70000.0
+MAINSTREAM_AGE_SPREAD = 12.0
+MAINSTREAM_ODOMETER_SPREAD = 90000.0
 
 try:
     df_clean = pd.read_csv(MODELS_DIR / 'vehicles_clean.csv')
@@ -72,9 +87,46 @@ try:
         .apply(lambda arr: sorted(arr.tolist()))
         .to_dict()
     )
+    if not df_clean.empty:
+        df_clean = df_clean.dropna(subset=['year', 'odometer']).copy()
+        df_clean['age'] = np.maximum(0, TRAINING_REFERENCE_YEAR - df_clean['year'].astype(float))
+        MAINSTREAM_AGE_CENTER = float(df_clean['age'].median())
+        MAINSTREAM_ODOMETER_CENTER = float(df_clean['odometer'].astype(float).median())
+        age_q1, age_q3 = df_clean['age'].quantile([0.25, 0.75])
+        miles_q1, miles_q3 = df_clean['odometer'].astype(float).quantile([0.25, 0.75])
+        MAINSTREAM_AGE_SPREAD = max(float(age_q3 - age_q1), 10.0)
+        MAINSTREAM_ODOMETER_SPREAD = max(float(miles_q3 - miles_q1), 50000.0)
 except FileNotFoundError:
     MFR_MODELS = {}
     logger.error("vehicles_clean.csv not found — /metadata will return empty options.")
+
+
+def normalize_manufacturer_key(value):
+    return re.sub(r"[\s_-]+", ' ', str(value).lower().strip())
+
+
+def canonicalize_manufacturer(value):
+    normalized = normalize_manufacturer_key(value)
+    for canonical, aliases in LUXURY_MANUFACTURER_ALIASES.items():
+        if normalized in aliases:
+            return canonical
+    return normalized
+
+
+def contains_model_phrase(model_name, token):
+    normalized_model = re.sub(r'[^a-z0-9]+', ' ', str(model_name).lower().strip())
+    normalized_token = re.sub(r'[^a-z0-9]+', ' ', str(token).lower().strip())
+    if not normalized_token:
+        return False
+    pattern = rf'(^|\s){re.escape(normalized_token)}(\s|$)'
+    return re.search(pattern, normalized_model) is not None
+
+
+def has_luxury_model_bump(model_name):
+    return any(
+        contains_model_phrase(model_name, token)
+        for token in ['m5', 'rs', 'amg', 's class', '7 series', 'x5', 'range rover', 'escalade', 'g class', 'q7', 'gt']
+    )
 
 
 def get_or_create_user_id():
@@ -86,35 +138,27 @@ def get_or_create_user_id():
     return user_id, is_new
 
 
-def compute_confidence(year, odometer, manufacturer, model_name, fuel, transmission):
+def compute_confidence(year, odometer):
     age = max(0, TRAINING_REFERENCE_YEAR - int(year))
-    age_score = max(0.0, 100.0 - age * 6.0)
-    mileage_score = max(0.0, 100.0 - (float(odometer) / 200000.0) * 100.0)
+    mileage = max(0.0, float(odometer))
 
-    manufacturer_norm = str(manufacturer).lower().strip()
-    model_norm = str(model_name).lower().strip()
-    luxury_bonus = 6 if manufacturer_norm in LUXURY_MANUFACTURERS else 0
-    if any(token in model_norm for token in ['m5', 'rs', 'amg', 's class', '7 series', 'x5', 'range rover', 'escalade', 'g class', 'q7']):
-        luxury_bonus += 8
-
-    fuel_bonus = {'gas': 4, 'diesel': 3, 'hybrid': 5, 'electric': 6}.get(str(fuel).lower().strip(), 0)
-    transmission_bonus = 4 if str(transmission).lower().strip() == 'automatic' else 0
-
-    score = (age_score * 0.45) + (mileage_score * 0.45) + luxury_bonus + fuel_bonus + transmission_bonus
+    age_distance = abs(age - MAINSTREAM_AGE_CENTER) / max(MAINSTREAM_AGE_SPREAD, 1.0)
+    mileage_distance = abs(mileage - MAINSTREAM_ODOMETER_CENTER) / max(MAINSTREAM_ODOMETER_SPREAD, 1.0)
+    score = 100.0 - (age_distance * 70.0) - (mileage_distance * 50.0)
     return int(max(38, min(96, round(score))))
 
 
 def apply_luxury_price_adjustment(predicted_price, manufacturer, model_name):
-    manufacturer_norm = str(manufacturer).lower().strip()
+    manufacturer_key = canonicalize_manufacturer(manufacturer)
     model_norm = str(model_name).lower().strip()
 
-    if manufacturer_norm in LUXURY_MANUFACTURERS:
-        multiplier = LUXURY_MULTIPLIERS.get(manufacturer_norm, 0.82)
-        if any(token in model_norm for token in ['m5', 'rs', 'amg', 's class', '7 series', 'x5', 'range rover', 'escalade', 'g class', 'q7', 'gt']):
+    if manufacturer_key in LUXURY_MANUFACTURERS:
+        multiplier = LUXURY_MULTIPLIERS.get(manufacturer_key, 0.82)
+        if has_luxury_model_bump(model_norm):
             multiplier *= 0.92
         return float(predicted_price) * multiplier
 
-    if any(token in model_norm for token in ['luxury', 'rs', 'amg', 's class', '7 series', 'x5', 'g class', 'm series']):
+    if any(contains_model_phrase(model_norm, token) for token in ['luxury', 'rs', 'amg', 's class', '7 series', 'x5', 'g class', 'm series']):
         return float(predicted_price) * 0.88
 
     return float(predicted_price)
@@ -159,10 +203,10 @@ def predict():
     if year < MIN_YEAR or year > MAX_YEAR:
         return jsonify({"error": f"year must be between {MIN_YEAR} and {MAX_YEAR}"}), 400
 
-    if odometer < 0 or odometer > 400000:
-        return jsonify({"error": "odometer must be between 0 and 400000"}), 400
+    if odometer < MIN_ODOMETER or odometer > MAX_ODOMETER:
+        return jsonify({"error": f"odometer must be between {MIN_ODOMETER:,} and {MAX_ODOMETER:,}"}), 400
 
-    manufacturer = str(data['manufacturer']).lower().strip()
+    manufacturer = canonicalize_manufacturer(data['manufacturer'])
     model_name = str(data['model']).lower().strip()
     fuel = str(data['fuel']).lower().strip()
     transmission = str(data['transmission']).lower().strip()
@@ -204,7 +248,7 @@ def predict():
         return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
     adjusted_price = apply_luxury_price_adjustment(predicted_price, manufacturer, model_name)
-    confidence = compute_confidence(year, odometer, manufacturer, model_name, fuel, transmission)
+    confidence = compute_confidence(year, odometer)
     rounded_price = round(adjusted_price, 2)
 
     user_id, is_new_user = get_or_create_user_id()

@@ -37,9 +37,10 @@
     const TAGLINE = "Beyond the odometer. Know your car's true value.";
     const API_BASE = 'https://odomai.onrender.com';
     const CURRENT_YEAR = new Date().getFullYear();
-    const MIN_YEAR = 1980;
-    const MAX_YEAR = CURRENT_YEAR + 1;
-    const MAX_MILES = 400000;
+    const MIN_YEAR = 1995;
+    const MAX_YEAR = 2024;
+    const MIN_MILES = 1000;
+    const MAX_MILES = 300000;
 
     function normalizeMetadata(raw) {
       if (!raw || typeof raw !== 'object') return { manufacturers: [], modelsByManufacturer: {}, fuelTypes: [], transmissions: [] };
@@ -58,10 +59,16 @@
     }
 
     function placeholderConfidence({ year, miles }) {
-      const age = CURRENT_YEAR - Number(year || CURRENT_YEAR);
-      const ageScore = Math.max(0, 100 - age * 4);
-      const mileageScore = Math.max(0, 100 - (Number(miles || 0) / MAX_MILES) * 100);
-      return Math.round(Math.min(96, Math.max(35, ageScore * 0.5 + mileageScore * 0.5)));
+      const age = Math.max(0, CURRENT_YEAR - Number(year || CURRENT_YEAR));
+      const mileage = Math.max(0, Number(miles || 0));
+      const ageCenter = 9;
+      const mileageCenter = 70000;
+      const ageSpread = 12;
+      const mileageSpread = 90000;
+      const ageDistance = Math.abs(age - ageCenter) / ageSpread;
+      const mileageDistance = Math.abs(mileage - mileageCenter) / mileageSpread;
+      const score = 100 - (ageDistance * 70) - (mileageDistance * 50);
+      return Math.max(38, Math.min(96, Math.round(score)));
     }
 
     function formatCurrency(n) {
@@ -87,19 +94,14 @@
       const year = Number(payload.year ?? CURRENT_YEAR);
       const odometer = Number(payload.odometer ?? 0);
       const age = Math.max(0, CURRENT_YEAR - year);
-      const ageScore = Math.max(0, 100 - age * 6);
-      const mileageScore = Math.max(0, 100 - (odometer / MAX_MILES) * 100);
-      const manufacturer = String(payload.manufacturer || '').toLowerCase();
-      const model = String(payload.model || '').toLowerCase();
-      const fuel = String(payload.fuel || '').toLowerCase();
-      const transmission = String(payload.transmission || '').toLowerCase();
-
-      const luxuryBrand = ['bmw', 'mercedes', 'audi', 'porsche', 'cadillac', 'lexus', 'infiniti', 'acura', 'jaguar', 'land rover', 'range rover', 'maserati', 'genesis', 'mini', 'tesla', 'volvo', 'alfa romeo'].includes(manufacturer);
-      const luxuryModel = ['m5', 'rs', 'amg', 's class', '7 series', 'x5', 'range rover', 'escalade', 'g class', 'q7', 'm series'].some((token) => model.includes(token));
-      const fuelBonus = { gas: 4, diesel: 3, hybrid: 5, electric: 6 }[fuel] || 0;
-      const transmissionBonus = transmission === 'automatic' ? 4 : 0;
-      const score = (ageScore * 0.45) + (mileageScore * 0.45) + (luxuryBrand ? 6 : 0) + (luxuryModel ? 8 : 0) + fuelBonus + transmissionBonus;
-      return Math.round(Math.max(38, Math.min(96, score)));
+      const ageCenter = 9;
+      const mileageCenter = 70000;
+      const ageSpread = 12;
+      const mileageSpread = 90000;
+      const ageDistance = Math.abs(age - ageCenter) / ageSpread;
+      const mileageDistance = Math.abs(odometer - mileageCenter) / mileageSpread;
+      const score = 100 - (ageDistance * 70) - (mileageDistance * 50);
+      return Math.max(38, Math.min(96, Math.round(score)));
     }
 
     function Logo({ variant = 'light', size = 28 }) {
@@ -254,8 +256,8 @@
         ? `Enter a year between ${MIN_YEAR} and ${MAX_YEAR}.`
         : null;
 
-      const milesError = miles !== '' && (!/^\d+$/.test(String(miles)) || Number(miles) < 0 || Number(miles) > MAX_MILES)
-        ? `Enter mileage between 0 and ${formatMiles(MAX_MILES)}.`
+      const milesError = miles !== '' && (!/^\d+$/.test(String(miles)) || Number(miles) < MIN_MILES || Number(miles) > MAX_MILES)
+        ? `Enter mileage between ${formatMiles(MIN_MILES)} and ${formatMiles(MAX_MILES)}.`
         : null;
 
       const canSubmit = manufacturer && model && fuel && transmission && year !== '' && miles !== '' && !yearError && !milesError && !submitting;

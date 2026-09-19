@@ -35,7 +35,9 @@
     };
 
     const TAGLINE = "Beyond the odometer. Know your car's true value.";
-    const API_BASE = 'https://odomai.onrender.com';
+    const API_BASE = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+      ? ''
+      : 'https://odomai.onrender.com';
     const CURRENT_YEAR = new Date().getFullYear();
     const MIN_YEAR = 1995;
     const MAX_YEAR = 2024;

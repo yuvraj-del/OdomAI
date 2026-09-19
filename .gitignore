@@ -12,3 +12,7 @@ __pycache__/
 # OS system files
 .DS_Store
 Thumbs.db
+
+# Raw dataset (download from Kaggle, see notebooks/odomai_model_training.ipynb)
+data/*
+!data/.gitkeep

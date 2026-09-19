@@ -75,9 +75,11 @@ LUXURY_MANUFACTURER_ALIASES = {
     'land rover': {'land rover', 'land-rover', 'landrover'},
 }
 
-# Confidence = estimated % chance the estimate lands within +/-20% of the typical listing price.
+# Base confidence = estimated % chance the estimate lands within +/-20% of the typical listing price.
 # Coefficients come from a linear fit on ~20k held-out listings the model never trained on:
 # older, higher-mileage and rarer-model cars are estimated less accurately.
+# The displayed Confidence Rating is that base score plus a fixed boost, capped at CONFIDENCE_MAX,
+# so it is a rating rather than a calibrated probability.
 CONFIDENCE_BASE = 87.0
 CONFIDENCE_PER_YEAR_OF_AGE = 1.7
 CONFIDENCE_PER_10K_MILES = 0.15
@@ -86,7 +88,9 @@ RARE_MODEL_MAX_LISTINGS = 120        # models with fewer training listings count
 CONFIDENCE_AGE_RANGE = (5, 30)       # the data is thin outside this age range
 # Heuristic, not fitted: the data has almost no cars under 5 years old, so newer cars are extrapolation.
 CONFIDENCE_PER_YEAR_BELOW_DATA = 6.0
-CONFIDENCE_LIMITS = (10, 90)
+CONFIDENCE_LIMITS = (10, 90)         # limits of the base score, before the boost
+CONFIDENCE_BOOST = 15                # added to the base score for the displayed rating
+CONFIDENCE_MAX = 95                  # the displayed rating never exceeds this
 
 try:
     df_clean = pd.read_csv(MODELS_DIR / 'vehicles_clean.csv')
@@ -141,7 +145,7 @@ def get_or_create_user_id():
 
 
 def compute_confidence(year, odometer, model_name=None):
-    """Estimated % chance the price estimate is within +/-20% of the typical listing price."""
+    """Confidence Rating (0-100): the base accuracy score for this car, plus CONFIDENCE_BOOST, capped at CONFIDENCE_MAX."""
     age = max(0, TRAINING_REFERENCE_YEAR - int(year))
     mileage = max(0.0, float(odometer))
     is_rare_model = MODEL_LISTING_COUNTS.get(str(model_name).lower().strip(), RARE_MODEL_MAX_LISTINGS) < RARE_MODEL_MAX_LISTINGS
@@ -155,7 +159,8 @@ def compute_confidence(year, odometer, model_name=None):
         - CONFIDENCE_PER_YEAR_BELOW_DATA * max(0, min_age - age)
     )
     low, high = CONFIDENCE_LIMITS
-    return int(max(low, min(high, round(score))))
+    base_score = int(max(low, min(high, round(score))))
+    return min(CONFIDENCE_MAX, base_score + CONFIDENCE_BOOST)
 
 
 def apply_progressive_price_reduction(predicted_price):

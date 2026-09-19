@@ -1,7 +1,11 @@
 import unittest
+from unittest import mock
 
+from backend import app as app_module
 from backend.app import (
+    CONFIDENCE_BOOST,
     CONFIDENCE_LIMITS,
+    CONFIDENCE_MAX,
     MODEL_LISTING_COUNTS,
     RARE_MODEL_MAX_LISTINGS,
     apply_luxury_price_adjustment,
@@ -52,7 +56,19 @@ class AppLogicRegressionTests(unittest.TestCase):
 
     def test_confidence_stays_within_limits(self):
         for year, miles in [(1995, 300000), (2026, 1000), (2012, 100000)]:
-            self.assertTrue(CONFIDENCE_LIMITS[0] <= compute_confidence(year, miles) <= CONFIDENCE_LIMITS[1])
+            rating = compute_confidence(year, miles)
+            self.assertTrue(CONFIDENCE_LIMITS[0] + CONFIDENCE_BOOST <= rating <= CONFIDENCE_MAX)
+
+    def test_confidence_rating_adds_the_boost(self):
+        # 2015 / 80,000 mi: base 87 - 1.7*11 - 0.15*8 = 67.1 -> 67, so the rating is 67 + boost.
+        self.assertEqual(compute_confidence(2015, 80000), 67 + CONFIDENCE_BOOST)
+        # 2020 / 30,000 mi: base 87 - 1.7*6 - 0.15*3 = 76.35 -> 76, so the rating is 91.
+        self.assertEqual(compute_confidence(2020, 30000), 91)
+
+    def test_confidence_rating_is_capped(self):
+        # With today's constants no car reaches the cap (the best base score is about 78), so raise the boost to test it.
+        with mock.patch.object(app_module, "CONFIDENCE_BOOST", 40):
+            self.assertEqual(compute_confidence(2020, 30000), CONFIDENCE_MAX)
 
     def test_progressive_price_reducer_hits_target_ranges(self):
         self.assertAlmostEqual(apply_luxury_price_adjustment(15000, 'toyota', 'corolla'), 15000.0, places=2)

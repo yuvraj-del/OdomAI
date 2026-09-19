@@ -1,3 +1,5 @@
+from datetime import datetime
+from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import joblib
@@ -5,11 +7,15 @@ import pandas as pd
 import numpy as np
 import uuid
 from dotenv import load_dotenv
-from db import init_db, close_db, create_user_if_new, save_car, get_user_cars
+from backend.db import init_db, close_db, create_user_if_new, save_car, get_user_cars
 
 load_dotenv()
 
-app = Flask(__name__)
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODELS_DIR = BASE_DIR / 'models'
+FRONTEND_DIR = BASE_DIR / 'frontend'
+
+app = Flask(__name__, static_folder=str(FRONTEND_DIR), template_folder=str(FRONTEND_DIR))
 CORS(app, supports_credentials=True, origins=["http://localhost:5173", "https://odomai.onrender.com"])
 
 init_db()
@@ -20,11 +26,16 @@ def teardown_db(exception):
     close_db(exception)
 
 
-model = joblib.load('odomai_model.pkl')
-target_encoder = joblib.load('target_encoder.pkl')
-model_columns = joblib.load('model_columns.pkl')
+model = joblib.load(MODELS_DIR / 'odomai_model.pkl')
+target_encoder = joblib.load(MODELS_DIR / 'target_encoder.pkl')
+model_columns = joblib.load(MODELS_DIR / 'model_columns.pkl')
 
 TRAINING_REFERENCE_YEAR = 2026
+MIN_YEAR = 1980
+MAX_YEAR = datetime.now().year + 1
+ALLOWED_FUEL_TYPES = {"gas", "diesel", "hybrid", "electric"}
+ALLOWED_TRANSMISSIONS = {"automatic", "manual"}
+
 LUXURY_MANUFACTURERS = {
     'bmw', 'mercedes', 'audi', 'porsche', 'cadillac', 'lexus', 'infiniti', 'acura',
     'jaguar', 'land rover', 'range rover', 'maserati', 'genesis', 'mini', 'tesla',
@@ -51,7 +62,7 @@ LUXURY_MULTIPLIERS = {
 }
 
 try:
-    df_clean = pd.read_csv('vehicles_clean.csv')
+    df_clean = pd.read_csv(MODELS_DIR / 'vehicles_clean.csv')
     MFR_MODELS = (
         df_clean.groupby('manufacturer')['model']
         .unique()
@@ -133,15 +144,31 @@ def predict():
         return jsonify({"error": f"Missing required field(s): {', '.join(missing)}"}), 400
 
     try:
-        year = int(data['year'])
+        year_raw = float(data['year'])
         odometer = float(data['odometer'])
     except (ValueError, TypeError):
         return jsonify({"error": "year must be an integer and odometer must be a number"}), 400
+
+    if not year_raw.is_integer():
+        return jsonify({"error": f"year must be an integer between {MIN_YEAR} and {MAX_YEAR}"}), 400
+
+    year = int(year_raw)
+    if year < MIN_YEAR or year > MAX_YEAR:
+        return jsonify({"error": f"year must be between {MIN_YEAR} and {MAX_YEAR}"}), 400
+
+    if odometer < 0 or odometer > 400000:
+        return jsonify({"error": "odometer must be between 0 and 400000"}), 400
 
     manufacturer = str(data['manufacturer']).lower().strip()
     model_name = str(data['model']).lower().strip()
     fuel = str(data['fuel']).lower().strip()
     transmission = str(data['transmission']).lower().strip()
+
+    if fuel not in ALLOWED_FUEL_TYPES:
+        return jsonify({"error": f"fuel must be one of: {', '.join(sorted(ALLOWED_FUEL_TYPES))}"}), 400
+
+    if transmission not in ALLOWED_TRANSMISSIONS:
+        return jsonify({"error": f"transmission must be one of: {', '.join(sorted(ALLOWED_TRANSMISSIONS))}"}), 400
 
     if MFR_MODELS:
         if manufacturer not in MFR_MODELS:
@@ -186,7 +213,7 @@ def predict():
             make=manufacturer,
             model=model_name,
             year=year,
-            mileage=odometer,
+            mileage=int(odometer),
             condition=None,
             predicted_price=rounded_price
         )

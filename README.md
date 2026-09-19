@@ -20,13 +20,15 @@ An end-to-end machine learning product: raw used-car listings go in one end, and
 
 ## Results at a glance
 
+Accuracy figures are for the raw model on 20,000 held-out listings, before the app's pricing rules (see [The API](#the-api)).
+
 | | |
 |---|---|
 | **Training data** | 100,000 cleaned listings, 36 manufacturers, 830 distinct models, model years 1995-2022 |
 | **Typical error** | **$2,949** mean absolute error, **16%** median error on 20,000 held-out listings |
 | **Explained variance** | **R² = 0.82** |
 | **vs. a naive baseline** | Predicting each model's median price gives $6,432 MAE, so the model **cuts the error by 54%** |
-| **Stability** | 5-fold cross-validation: MAE **$2,927 ± 28**, R² 0.824 ± 0.009. Not a lucky split |
+| **Stability** | 5-fold cross-validation, target encoder refit inside each fold: MAE **$2,927 ± 28**, R² 0.824 ± 0.009 |
 | **Tests** | 9 unit tests covering the pricing rules and confidence score |
 
 ---
@@ -67,7 +69,7 @@ flowchart LR
 ## The model
 
 ### Data
-The training data comes from the public [Craigslist Cars & Trucks dataset](https://www.kaggle.com/datasets/austinreese/craigslist-carstrucks-data). Raw classified listings are noisy, so most of the accuracy is decided in the cleaning:
+The training data comes from the public Kaggle [Used Cars Dataset](https://www.kaggle.com/datasets/austinreese/craigslist-carstrucks-data) (Craigslist Cars & Trucks data), listed under CC0: Public Domain. `models/vehicles_clean.csv` is a cleaned 100k-row, 7-column subset of it, included so the app can fill its dropdowns and count listings per model. Raw classified listings are noisy, so most of the accuracy is decided in the cleaning:
 
 - Kept only listings with all seven needed fields, with prices of $1k-$120k, 1k-300k miles, and model years 1995 and later.
 - Lower-cased and trimmed all text, and removed motorcycle listings (Harley-Davidson).
@@ -85,11 +87,11 @@ The training data comes from the public [Craigslist Cars & Trucks dataset](https
 | **Split before encoding** | The encoder is fitted on the training set only. Fitting it on all the data would leak test prices into the features |
 | **XGBoost** | 400 trees, depth 6, learning rate 0.05, 80% row and column subsampling |
 
-Age is the strongest signal (about 45% of feature importance in a retrain with the same settings), followed by model name (about 19%) and mileage (about 15%).
+Age is the strongest signal (about 43% of the deployed model's feature importance), followed by model name (17%), mileage (17%) and fuel type (13%). Manufacturer contributes about 5%.
 
 ### How accurate is it, really?
 
-Overall numbers are in the table at the top. Breaking the held-out results down shows where it is strong and where it is not:
+Overall numbers are in the table at the top. Breaking the held-out results down (raw model) shows where it is strong and where it is not:
 
 | Segment (held-out listings) | Within ±20% | Median error |
 |---|---|---|
@@ -100,7 +102,7 @@ Overall numbers are in the table at the top. Breaking the held-out results down 
 | Cars over 20 years old | 40% | 25.6% |
 | Cars priced under $5k | 40% | 26.4% |
 
-It is weakest at the extremes: very cheap cars, where a small dollar miss is a large percentage, and very old cars. I kept this breakdown in the README on purpose, because knowing where a model fails matters as much as its headline score.
+It is weakest at the extremes: very cheap cars, where a small dollar miss is a large percentage, and very old cars.
 
 ---
 
@@ -240,8 +242,6 @@ OdomAI/
 ---
 
 ## Known limitations
-
-I would rather state these than have them found:
 
 - **Asking prices, not sale prices.** The data comes from classified ads, so "accuracy" means agreement with listing prices. There is no ground truth for what cars actually sell for.
 - **Limited coverage of new cars.** The training data runs through model year 2022. The app accepts years up to 2026 but shows a lower confidence for them, because those estimates are extrapolation.

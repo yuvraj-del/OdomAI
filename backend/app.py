@@ -281,7 +281,8 @@ def predict():
             year=year,
             mileage=int(odometer),
             condition=None,
-            predicted_price=rounded_price
+            predicted_price=rounded_price,
+            confidence=confidence
         )
     except Exception as e:
         print(f"WARNING: Failed to save car history: {e}")

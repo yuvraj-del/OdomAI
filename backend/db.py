@@ -55,9 +55,15 @@ def init_db():
                 mileage INTEGER NOT NULL,
                 condition TEXT,
                 predicted_price REAL NOT NULL,
+                confidence INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
+        """)
+
+        # Migration for tables created before the confidence column existed.
+        cursor.execute("""
+            ALTER TABLE cars ADD COLUMN IF NOT EXISTS confidence INTEGER
         """)
         print("Database initialized successfully.")
     except Exception as e:
@@ -76,15 +82,15 @@ def create_user_if_new(user_id):
             ON CONFLICT (id) DO NOTHING
         """, (user_id,))
 
-def save_car(user_id, make, model, year, mileage, condition, predicted_price):
+def save_car(user_id, make, model, year, mileage, condition, predicted_price, confidence=None):
     """Saves a prediction result to the cars table."""
     car_id = str(uuid.uuid4())
     db = get_db()
     with db.cursor() as cursor:
         cursor.execute("""
-            INSERT INTO cars (id, user_id, make, model, year, mileage, condition, predicted_price)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (car_id, user_id, make, model, year, mileage, condition, predicted_price))
+            INSERT INTO cars (id, user_id, make, model, year, mileage, condition, predicted_price, confidence)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (car_id, user_id, make, model, year, mileage, condition, predicted_price, confidence))
     return car_id
 
 def get_user_cars(user_id):

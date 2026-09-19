@@ -1,40 +1,55 @@
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import joblib
 import pandas as pd
 import numpy as np
 import uuid
-import os
 from dotenv import load_dotenv
 from db import init_db, close_db, create_user_if_new, save_car, get_user_cars
 
 load_dotenv()
 
 app = Flask(__name__)
-# Allows your React frontend (different origin) to call this API with credentials
 CORS(app, supports_credentials=True, origins=["http://localhost:5173", "https://odomai.onrender.com"])
 
-# Initialize DB at startup
 init_db()
+
 
 @app.teardown_appcontext
 def teardown_db(exception):
     close_db(exception)
 
-# ============================================
-# Load model artifacts once at startup
-# ============================================
+
 model = joblib.load('odomai_model.pkl')
 target_encoder = joblib.load('target_encoder.pkl')
 model_columns = joblib.load('model_columns.pkl')
 
-# Reference year used during training — must match the Kaggle notebook's
-# CURRENT_YEAR value at the time the model was trained. This is a temporary
-# hardcode (see Issue 1) until versioned with the model artifacts.
 TRAINING_REFERENCE_YEAR = 2026
+LUXURY_MANUFACTURERS = {
+    'bmw', 'mercedes', 'audi', 'porsche', 'cadillac', 'lexus', 'infiniti', 'acura',
+    'jaguar', 'land rover', 'range rover', 'maserati', 'genesis', 'mini', 'tesla',
+    'volvo', 'alfa romeo'
+}
+LUXURY_MULTIPLIERS = {
+    'bmw': 0.76,
+    'mercedes': 0.72,
+    'audi': 0.75,
+    'porsche': 0.70,
+    'cadillac': 0.78,
+    'lexus': 0.81,
+    'infiniti': 0.83,
+    'acura': 0.82,
+    'tesla': 0.80,
+    'land rover': 0.77,
+    'range rover': 0.77,
+    'jaguar': 0.79,
+    'maserati': 0.74,
+    'genesis': 0.84,
+    'volvo': 0.86,
+    'mini': 0.88,
+    'alfa romeo': 0.80,
+}
 
-# Load cleaned data once, used only to build the manufacturer -> model dropdown map.
-# This ensures the frontend only ever offers combinations the model was trained on.
 try:
     df_clean = pd.read_csv('vehicles_clean.csv')
     MFR_MODELS = (
@@ -47,8 +62,8 @@ except FileNotFoundError:
     MFR_MODELS = {}
     print("WARNING: vehicles_clean.csv not found — /metadata will return empty options.")
 
+
 def get_or_create_user_id():
-    """Reads the user_id cookie, or generates a new one if missing."""
     user_id = request.cookies.get('user_id')
     is_new = False
     if not user_id:
@@ -57,19 +72,47 @@ def get_or_create_user_id():
     return user_id, is_new
 
 
+def compute_confidence(year, odometer, manufacturer, model_name, fuel, transmission):
+    age = max(0, TRAINING_REFERENCE_YEAR - int(year))
+    age_score = max(0.0, 100.0 - age * 6.0)
+    mileage_score = max(0.0, 100.0 - (float(odometer) / 200000.0) * 100.0)
+
+    manufacturer_norm = str(manufacturer).lower().strip()
+    model_norm = str(model_name).lower().strip()
+    luxury_bonus = 6 if manufacturer_norm in LUXURY_MANUFACTURERS else 0
+    if any(token in model_norm for token in ['m5', 'rs', 'amg', 's class', '7 series', 'x5', 'range rover', 'escalade', 'g class', 'q7']):
+        luxury_bonus += 8
+
+    fuel_bonus = {'gas': 4, 'diesel': 3, 'hybrid': 5, 'electric': 6}.get(str(fuel).lower().strip(), 0)
+    transmission_bonus = 4 if str(transmission).lower().strip() == 'automatic' else 0
+
+    score = (age_score * 0.45) + (mileage_score * 0.45) + luxury_bonus + fuel_bonus + transmission_bonus
+    return int(max(38, min(96, round(score))))
+
+
+def apply_luxury_price_adjustment(predicted_price, manufacturer, model_name):
+    manufacturer_norm = str(manufacturer).lower().strip()
+    model_norm = str(model_name).lower().strip()
+
+    if manufacturer_norm in LUXURY_MANUFACTURERS:
+        multiplier = LUXURY_MULTIPLIERS.get(manufacturer_norm, 0.82)
+        if any(token in model_norm for token in ['m5', 'rs', 'amg', 's class', '7 series', 'x5', 'range rover', 'escalade', 'g class', 'q7', 'gt']):
+            multiplier *= 0.92
+        return float(predicted_price) * multiplier
+
+    if any(token in model_norm for token in ['luxury', 'rs', 'amg', 's class', '7 series', 'x5', 'g class', 'm series']):
+        return float(predicted_price) * 0.88
+
+    return float(predicted_price)
+
+
 @app.route('/health', methods=['GET'])
 def health():
-    """Simple endpoint to confirm the service is up (also warms it after Render cold start)."""
     return jsonify({"status": "ok"})
 
 
 @app.route('/metadata', methods=['GET'])
 def metadata():
-    """
-    Returns manufacturer -> list of valid models, plus static dropdown options
-    (fuel, transmission). The frontend uses this to populate its dropdowns so
-    users can only submit combinations the model was actually trained on.
-    """
     return jsonify({
         "manufacturers": sorted(MFR_MODELS.keys()),
         "models_by_manufacturer": MFR_MODELS,
@@ -80,22 +123,6 @@ def metadata():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    """
-    Accepts JSON:
-    {
-        "manufacturer": "honda",
-        "model": "civic",
-        "fuel": "gas",
-        "transmission": "automatic",
-        "year": 2022,
-        "odometer": 25000
-    }
-    Returns JSON:
-    {
-        "predicted_price": 18574.00,
-        "input": { ...echoed input... }
-    }
-    """
     data = request.get_json(silent=True)
     if data is None:
         return jsonify({"error": "Request body must be valid JSON"}), 400
@@ -116,8 +143,6 @@ def predict():
     fuel = str(data['fuel']).lower().strip()
     transmission = str(data['transmission']).lower().strip()
 
-    # Validate against known training combinations (prevents garbage predictions
-    # on manufacturer/model pairs the model never saw)
     if MFR_MODELS:
         if manufacturer not in MFR_MODELS:
             return jsonify({"error": f"Unknown manufacturer: '{manufacturer}'"}), 400
@@ -148,10 +173,12 @@ def predict():
     except Exception as e:
         return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
-    rounded_price = round(predicted_price, 2)
-    
+    adjusted_price = apply_luxury_price_adjustment(predicted_price, manufacturer, model_name)
+    confidence = compute_confidence(year, odometer, manufacturer, model_name, fuel, transmission)
+    rounded_price = round(adjusted_price, 2)
+
     user_id, is_new_user = get_or_create_user_id()
-    
+
     try:
         create_user_if_new(user_id)
         save_car(
@@ -165,10 +192,11 @@ def predict():
         )
     except Exception as e:
         print(f"WARNING: Failed to save car history: {e}")
-        # Don't fail the prediction if history fails
 
     response = jsonify({
         "predicted_price": rounded_price,
+        "confidence": confidence,
+        "adjustment_multiplier": round(float(adjusted_price / max(predicted_price, 1.0)), 3),
         "input": {
             "manufacturer": manufacturer,
             "model": model_name,
@@ -178,36 +206,35 @@ def predict():
             "odometer": odometer
         }
     })
-    
+
     if is_new_user:
         response.set_cookie(
-            'user_id', 
-            user_id, 
-            max_age=60*60*24*365, 
-            secure=True, 
-            httponly=True, 
+            'user_id',
+            user_id,
+            max_age=60 * 60 * 24 * 365,
+            secure=True,
+            httponly=True,
             samesite='None'
         )
 
     return response
 
+
 @app.route('/cars', methods=['GET'])
 def get_cars():
-    """Returns the reading history for the current user based on cookie."""
     user_id = request.cookies.get('user_id')
     if not user_id:
         return jsonify([])
-    
+
     try:
         cars = get_user_cars(user_id)
-        # RealDictRow is usually fine, but cast to dict for safety with jsonify
         return jsonify([dict(c) for c in cars])
     except Exception as e:
         return jsonify({"error": f"Failed to retrieve cars: {str(e)}"}), 500
 
+
 @app.route('/', methods=['GET'])
 def index():
-    """Serves the static vanilla JS test page."""
     return app.send_static_file('index.html')
 
 

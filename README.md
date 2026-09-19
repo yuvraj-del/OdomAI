@@ -2,9 +2,12 @@
 
 **Beyond the odometer. Know your car's true value.**
 
-An end-to-end machine learning product: raw used-car listings go in one end, and a live web app that prices any car in a second comes out the other. I cleaned the data with pandas, trained and evaluated an XGBoost model, served it through a Flask API, built a React front end, and stored each visitor's history in PostgreSQL.
+An end-to-end machine learning product: raw used-car listings go in one end, and a live web app that prices any car in seconds comes out the other. I cleaned the data with pandas, trained and evaluated an XGBoost model, served it through a Flask API, built a React front end, and stored each visitor's history in PostgreSQL.
 
 [![Live demo](https://img.shields.io/badge/live%20demo-odomai.onrender.com-534AB7?style=for-the-badge)](https://odomai.onrender.com)
+
+<!-- Screenshot: save an image (e.g. docs/screenshot.png), then replace this comment with
+     ![OdomAI screenshot](docs/screenshot.png) -->
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.1-000000?logo=flask&logoColor=white)
@@ -24,7 +27,7 @@ An end-to-end machine learning product: raw used-car listings go in one end, and
 | **Explained variance** | **R² = 0.82** |
 | **vs. a naive baseline** | Predicting each model's median price gives $6,432 MAE, so the model **cuts the error by 54%** |
 | **Stability** | 5-fold cross-validation: MAE **$2,927 ± 28**, R² 0.824 ± 0.009. Not a lucky split |
-| **Tests** | 7 unit tests covering the pricing rules and confidence score |
+| **Tests** | 9 unit tests covering the pricing rules and confidence score |
 
 ---
 
@@ -258,7 +261,7 @@ I would rather state these than have them found:
 
 ## Skills demonstrated
 
-**Data and ML:** pandas data cleaning and feature engineering, regex text normalization, leakage-safe train/test splitting, target encoding, gradient boosting, cross-validation, baseline comparison, error analysis by segment, and calibration of a confidence score.
+**Data and ML:** pandas data cleaning and feature engineering, regex text normalization, leakage-safe train/test splitting, target encoding, gradient boosting, cross-validation, baseline comparison, and error analysis by segment.
 
 **Backend:** REST API design, input validation, error handling, environment-based configuration, and unit testing.
 

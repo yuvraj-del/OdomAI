@@ -16,19 +16,6 @@ The app includes:
 - A confidence score based on how typical the vehicle is relative to the training data
 - Business logic for luxury-brand pricing and progressive market adjustments
 
-## Why This Project Is Strong for a Resume
-
-This project highlights the kind of end-to-end product work employers look for in a computer science student:
-
-- AI/ML workflow: cleaned and prepared real data, engineered features, and trained a prediction model
-- Full-stack development: built a web app with a server, API, frontend, and database
-- Data-driven decision making: used measurable vehicle characteristics instead of static pricing rules
-- Real-world engineering: implemented validation, user tracking, and persistence
-- API integration: connected a trained model to a frontend and surfaced results in a user-friendly interface
-- Deployment-ready structure: app is organized for local execution and production deployment
-
-This is a strong example of being able to move from raw data to a usable software product.
-
 ## Core Features
 
 ### AI Price Prediction
@@ -215,12 +202,6 @@ A user enters:
 - Transmission: automatic
 
 The app loads the trained model, transforms the features, predicts a fair price, applies luxury-adjustment logic, and returns a realistic estimated value with a confidence score.
-
-## Resume-Friendly Project Narrative
-
-A concise summary you could use on a resume:
-
-> Built OdomAI, a full-stack AI-powered used car pricing application. Trained a predictive model on vehicle data, integrated it into a Flask backend, and connected it to a frontend interface for real-time price estimation. Saved user predictions in PostgreSQL to support personalized car history tracking and demonstrate end-to-end product development from data to deployment.
 
 ## Future Improvements
 

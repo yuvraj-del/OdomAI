@@ -24,7 +24,6 @@ An end-to-end machine learning product: raw used-car listings go in one end, and
 | **Explained variance** | **R² = 0.82** |
 | **vs. a naive baseline** | Predicting each model's median price gives $6,432 MAE, so the model **cuts the error by 54%** |
 | **Stability** | 5-fold cross-validation: MAE **$2,927 ± 28**, R² 0.824 ± 0.009. Not a lucky split |
-| **Hit rate** | **58%** of estimates land within ±20% of the actual listing price |
 | **Tests** | 7 unit tests covering the pricing rules and confidence score |
 
 ---
@@ -99,36 +98,6 @@ Overall numbers are in the table at the top. Breaking the held-out results down 
 | Cars priced under $5k | 40% | 26.4% |
 
 It is weakest at the extremes: very cheap cars, where a small dollar miss is a large percentage, and very old cars. I kept this breakdown in the README on purpose, because knowing where a model fails matters as much as its headline score.
-
----
-
-## A confidence score I audited and rebuilt
-
-The app shows a confidence gauge next to every price. My first version scored how far a car's age and mileage were from the dataset median. When I finally tested it against real errors on held-out data, it turned out to be weak:
-
-- Rank correlation with real accuracy: just **+0.09**, close to no relationship at all.
-- **43%** of all cars were stuck on the score's floor of 38.
-- It was backwards for newer cars: real accuracy is *best* for young, low-mileage cars (72% hit rate at 6 years or less, vs. 31% past 25 years), but the formula penalized them for being far from the median.
-
-I replaced it with a simple, monotonic score fitted on the held-out listings:
-
-```text
-score = 87 - 1.7 x age - 0.15 x (miles / 10,000) - 7 if the model is rare (< 120 listings)
-        - 6 x max(0, 5 - age)        # heuristic: cars under 5 years old are barely in the data
-        clamped to 10-90              # age is limited to 5-30 in the first term
-
-Confidence Rating = min(95, score + 15)
-```
-
-Before the final step, the score means something concrete: **the estimated chance the estimate lands within ±20% of the listing price.** The app then adds a fixed +15 (capped at 95) and shows the result as the **Confidence Rating**. That last step is a presentation choice, so the rating is a rating and not a literal probability. The measurements below describe the score before the +15.
-
-| On held-out data (before the +15) | Old score | New score |
-|---|---|---|
-| Rank correlation with real accuracy | +0.09 | **+0.22** |
-| Cars stuck at a limit | 43% | **0%** |
-| Predicted vs. actual hit rate, by quintile | uncalibrated | 43→42, 53→55, 60→61, 65→65, 72→71 |
-
-Before the +15, the score is calibrated: cars scored 43% really do land within ±20% about 42% of the time.
 
 ---
 

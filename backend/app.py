@@ -75,22 +75,17 @@ LUXURY_MANUFACTURER_ALIASES = {
     'land rover': {'land rover', 'land-rover', 'landrover'},
 }
 
-# Base confidence = estimated % chance the estimate lands within +/-20% of the typical listing price.
-# Coefficients come from a linear fit on ~20k held-out listings the model never trained on:
-# older, higher-mileage and rarer-model cars are estimated less accurately.
-# The displayed Confidence Rating is that base score plus a fixed boost, capped at CONFIDENCE_MAX,
-# so it is a rating rather than a calibrated probability.
+
 CONFIDENCE_BASE = 87.0
 CONFIDENCE_PER_YEAR_OF_AGE = 1.7
 CONFIDENCE_PER_10K_MILES = 0.15
 CONFIDENCE_RARE_MODEL_PENALTY = 7.0
-RARE_MODEL_MAX_LISTINGS = 120        # models with fewer training listings count as rare
-CONFIDENCE_AGE_RANGE = (5, 30)       # the data is thin outside this age range
-# Heuristic, not fitted: the data has almost no cars under 5 years old, so newer cars are extrapolation.
+RARE_MODEL_MAX_LISTINGS = 120        
+CONFIDENCE_AGE_RANGE = (5, 30)       
 CONFIDENCE_PER_YEAR_BELOW_DATA = 6.0
-CONFIDENCE_LIMITS = (10, 90)         # limits of the base score, before the boost
-CONFIDENCE_BOOST = 15                # added to the base score for the displayed rating
-CONFIDENCE_MAX = 95                  # the displayed rating never exceeds this
+CONFIDENCE_LIMITS = (10, 90)         
+CONFIDENCE_BOOST = 15               
+CONFIDENCE_MAX = 95                  
 
 try:
     df_clean = pd.read_csv(MODELS_DIR / 'vehicles_clean.csv')

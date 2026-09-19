@@ -36,7 +36,7 @@ model_columns = joblib.load(MODELS_DIR / 'model_columns.pkl')
 
 TRAINING_REFERENCE_YEAR = 2026
 MIN_YEAR = 1995
-MAX_YEAR = 2024
+MAX_YEAR = 2026
 MIN_ODOMETER = 1000
 MAX_ODOMETER = 300000
 ALLOWED_FUEL_TYPES = {"gas", "diesel", "hybrid", "electric"}
@@ -321,8 +321,12 @@ def get_cars():
         return jsonify([])
 
     try:
-        cars = get_user_cars(user_id)
-        return jsonify([dict(c) for c in cars])
+        cars = [dict(c) for c in get_user_cars(user_id)]
+        # Rows saved before confidence was stored get the same formula /predict uses.
+        for car in cars:
+            if car.get('confidence') is None:
+                car['confidence'] = compute_confidence(car['year'], car['mileage'])
+        return jsonify(cars)
     except Exception as e:
         return jsonify({"error": f"Failed to retrieve cars: {str(e)}"}), 500
 

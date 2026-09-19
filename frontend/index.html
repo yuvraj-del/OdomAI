@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OdomAI — Beyond the odometer. Know your car's true value.</title>
   <meta name="description" content="OdomAI uses AI to predict the true market value of any used car. Enter your vehicle's details and get an instant price estimate." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='18' fill='%23EEEDFE' stroke='%23534AB7' stroke-width='3'/%3E%3Cpath d='M20 20 L28 12' stroke='%23534AB7' stroke-width='3' stroke-linecap='round'/%3E%3Ccircle cx='20' cy='20' r='3' fill='%23534AB7'/%3E%3C/svg%3E" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { margin: 0; background: #EEEDFE; }
@@ -22,6 +23,8 @@
   <div id="root"></div>
 
   <script type="text/babel">
+    // OdomAI frontend: a single-file React app (React 18 + in-browser Babel, no build step).
+    // Sections: config -> helpers -> Logo / ConfidenceDial -> OdomAI (page) -> styles -> render.
     const { useState, useEffect, useMemo, useCallback } = React;
 
     const COLORS = {
@@ -38,39 +41,22 @@
     const API_BASE = ['localhost', '127.0.0.1'].includes(window.location.hostname)
       ? ''
       : 'https://odomai.onrender.com';
-    const CURRENT_YEAR = new Date().getFullYear();
-    const MIN_YEAR = 1995;
-    const MAX_YEAR = 2024;
-    const MIN_MILES = 1000;
-    const MAX_MILES = 300000;
+
+    // Fallback input limits; the API's /metadata response is the source of truth.
+    const DEFAULT_LIMITS = { minYear: 1995, maxYear: 2026, minMiles: 1000, maxMiles: 300000 };
 
     function normalizeMetadata(raw) {
-      if (!raw || typeof raw !== 'object') return { manufacturers: [], modelsByManufacturer: {}, fuelTypes: [], transmissions: [] };
-
-      const manufacturers = raw.manufacturers || raw.makes || raw.manufacturer_list || Object.keys(raw.models_by_make || raw.modelsByManufacturer || {});
-      const modelsByManufacturer = raw.models_by_manufacturer || raw.modelsByManufacturer || raw.models_by_make || raw.models || {};
-      const fuelTypes = raw.fuel_types || raw.fuelTypes || ['gas', 'diesel', 'hybrid', 'electric'];
-      const transmissions = raw.transmissions || ['automatic', 'manual'];
+      const limits = { ...DEFAULT_LIMITS };
+      if (Array.isArray(raw?.year_range)) [limits.minYear, limits.maxYear] = raw.year_range;
+      if (Array.isArray(raw?.odometer_range)) [limits.minMiles, limits.maxMiles] = raw.odometer_range;
 
       return {
-        manufacturers: Array.isArray(manufacturers) ? manufacturers : [],
-        modelsByManufacturer: modelsByManufacturer && typeof modelsByManufacturer === 'object' ? modelsByManufacturer : {},
-        fuelTypes: Array.isArray(fuelTypes) ? fuelTypes : [],
-        transmissions: Array.isArray(transmissions) ? transmissions : [],
+        manufacturers: raw?.manufacturers ?? [],
+        modelsByManufacturer: raw?.models_by_manufacturer ?? {},
+        fuelTypes: raw?.fuel_types ?? [],
+        transmissions: raw?.transmissions ?? [],
+        limits,
       };
-    }
-
-    function placeholderConfidence({ year, miles }) {
-      const age = Math.max(0, CURRENT_YEAR - Number(year || CURRENT_YEAR));
-      const mileage = Math.max(0, Number(miles || 0));
-      const ageCenter = 9;
-      const mileageCenter = 70000;
-      const ageSpread = 12;
-      const mileageSpread = 90000;
-      const ageDistance = Math.abs(age - ageCenter) / ageSpread;
-      const mileageDistance = Math.abs(mileage - mileageCenter) / mileageSpread;
-      const score = 100 - (ageDistance * 70) - (mileageDistance * 50);
-      return Math.max(38, Math.min(96, Math.round(score)));
     }
 
     function formatCurrency(n) {
@@ -79,6 +65,11 @@
 
     function formatMiles(n) {
       return new Intl.NumberFormat('en-US').format(n);
+    }
+
+    function formatDate(value) {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
     function confidenceColor(pct) {
@@ -90,20 +81,6 @@
       const g = from.g + (to.g - from.g) * t;
       const b = from.b + (to.b - from.b) * t;
       return `#${hex(r)}${hex(g)}${hex(b)}`;
-    }
-
-    function computeConfidence(payload) {
-      const year = Number(payload.year ?? CURRENT_YEAR);
-      const odometer = Number(payload.odometer ?? 0);
-      const age = Math.max(0, CURRENT_YEAR - year);
-      const ageCenter = 9;
-      const mileageCenter = 70000;
-      const ageSpread = 12;
-      const mileageSpread = 90000;
-      const ageDistance = Math.abs(age - ageCenter) / ageSpread;
-      const mileageDistance = Math.abs(odometer - mileageCenter) / mileageSpread;
-      const score = 100 - (ageDistance * 70) - (mileageDistance * 50);
-      return Math.max(38, Math.min(96, Math.round(score)));
     }
 
     function Logo({ variant = 'light', size = 28 }) {
@@ -178,7 +155,7 @@
 
     function OdomAI() {
       const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth <= 680 : false);
-      const [metadata, setMetadata] = useState({ manufacturers: [], modelsByManufacturer: {}, fuelTypes: [], transmissions: [] });
+      const [metadata, setMetadata] = useState({ manufacturers: [], modelsByManufacturer: {}, fuelTypes: [], transmissions: [], limits: DEFAULT_LIMITS });
       const [metadataError, setMetadataError] = useState(null);
       const [loadingMetadata, setLoadingMetadata] = useState(true);
       const [manufacturer, setManufacturer] = useState('');
@@ -208,13 +185,14 @@
           if (res.ok) {
             const data = await res.json();
             const normalized = data.map((r) => ({
+              id: r.id,
               manufacturer: r.make,
               model: r.model,
               year: r.year,
               odometer: r.mileage,
               price: r.predicted_price,
-              confidence: typeof r.confidence === 'number' ? r.confidence : placeholderConfidence({ year: r.year, miles: r.mileage }),
-              created_at: r.created_at,
+              confidence: r.confidence,
+              createdAt: r.created_at,
             }));
             setReadingHistory(normalized);
           }
@@ -254,12 +232,14 @@
         return metadata.modelsByManufacturer[manufacturer] || [];
       }, [manufacturer, metadata]);
 
-      const yearError = year !== '' && (!/^\d+$/.test(String(year)) || Number(year) < MIN_YEAR || Number(year) > MAX_YEAR)
-        ? `Enter a year between ${MIN_YEAR} and ${MAX_YEAR}.`
+      const { minYear, maxYear, minMiles, maxMiles } = metadata.limits;
+
+      const yearError = year !== '' && (!/^\d+$/.test(String(year)) || Number(year) < minYear || Number(year) > maxYear)
+        ? `Enter a year between ${minYear} and ${maxYear}.`
         : null;
 
-      const milesError = miles !== '' && (!/^\d+$/.test(String(miles)) || Number(miles) < MIN_MILES || Number(miles) > MAX_MILES)
-        ? `Enter mileage between ${formatMiles(MIN_MILES)} and ${formatMiles(MAX_MILES)}.`
+      const milesError = miles !== '' && (!/^\d+$/.test(String(miles)) || Number(miles) < minMiles || Number(miles) > maxMiles)
+        ? `Enter mileage between ${formatMiles(minMiles)} and ${formatMiles(maxMiles)}.`
         : null;
 
       const canSubmit = manufacturer && model && fuel && transmission && year !== '' && miles !== '' && !yearError && !milesError && !submitting;
@@ -306,10 +286,12 @@
           }
 
           const data = await res.json();
-          const price = data.predicted_price ?? data.price;
-          const confidence = typeof data.confidence === 'number' ? data.confidence : computeConfidence(payload);
+          const price = data.predicted_price;
+          const confidence = data.confidence;
 
-          if (typeof price !== 'number') throw new Error('No price came back from the model.');
+          if (typeof price !== 'number' || typeof confidence !== 'number') {
+            throw new Error('The server sent back an incomplete reading.');
+          }
 
           setResult({ ...payload, price, confidence, timestamp: new Date().toISOString() });
         } catch (err) {
@@ -321,8 +303,6 @@
 
       return (
         <div style={{ ...styles.page, ...(isMobile ? { paddingBottom: 20 } : {}) }}>
-          <style>{FONT_IMPORT}</style>
-
           <header style={{ ...styles.header, ...(isMobile ? { paddingTop: 20 } : {}) }}>
             <div style={{ ...styles.headerTop, ...(isMobile ? { flexDirection: 'column', alignItems: 'stretch', gap: 12 } : {}) }}>
               <Logo variant="light" size={isMobile ? 24 : 30} />
@@ -375,7 +355,7 @@
 
                     <label style={styles.field}>
                       <span style={styles.label}>Year</span>
-                      <input style={{ ...styles.input, ...(yearError ? styles.inputError : {}) }} type="number" inputMode="numeric" value={year} placeholder={`e.g. ${CURRENT_YEAR - 3}`} onChange={handleYearChange} />
+                      <input style={{ ...styles.input, ...(yearError ? styles.inputError : {}) }} type="number" inputMode="numeric" value={year} placeholder={`e.g. ${new Date().getFullYear() - 3}`} onChange={handleYearChange} />
                       {yearError && <span style={styles.errorText}>{yearError}</span>}
                     </label>
 
@@ -386,7 +366,7 @@
                     </label>
                   </div>
 
-                  {metadataError && <p style={styles.warnText}>{metadataError} — you can still type once the list loads.</p>}
+                  {metadataError && <p style={styles.warnText}>Couldn't load makes and models ({metadataError}). Refresh the page to try again.</p>}
                   <button style={{ ...styles.button, opacity: canSubmit ? 1 : 0.5 }} onClick={calculate} disabled={!canSubmit}>
                     {submitting ? 'Reading the gauges…' : 'Calculate price'}
                   </button>
@@ -422,16 +402,18 @@
                           <th style={styles.th}>Miles</th>
                           <th style={styles.th}>Price</th>
                           <th style={styles.th}>Confidence</th>
+                          <th style={styles.th}>Saved</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {readingHistory.map((r, i) => (
-                          <tr key={i}>
+                        {readingHistory.map((r) => (
+                          <tr key={r.id}>
                             <td style={styles.td}>{r.manufacturer} {r.model}</td>
                             <td style={styles.td}>{r.year}</td>
                             <td style={styles.td}>{formatMiles(r.odometer)}</td>
                             <td style={styles.td}>{formatCurrency(r.price)}</td>
                             <td style={{ ...styles.td, color: confidenceColor(r.confidence), fontWeight: 600 }}>{r.confidence}%</td>
+                            <td style={styles.td}>{formatDate(r.createdAt)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -449,8 +431,6 @@
         </div>
       );
     }
-
-    const FONT_IMPORT = "@import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');";
 
     const styles = {
       page: {

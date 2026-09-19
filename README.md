@@ -115,7 +115,7 @@ The prediction engine is not just a raw model output. The app includes custom lo
 - Confidence scoring based on how “mainstream” a vehicle is compared to the training distribution
 - User-specific prediction history stored in a database
 
-This is a valuable part of the project because it shows that the system is built as a product, not just a notebook experiment.
+This is a valuable part of the project because it shows that the system is built as a product, not just a standalone model.
 
 ## API Endpoints
 

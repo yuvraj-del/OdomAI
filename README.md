@@ -6,8 +6,8 @@ An end-to-end machine learning product: raw used-car listings go in one end, and
 
 [![Live demo](https://img.shields.io/badge/live%20demo-odomai.onrender.com-534AB7?style=for-the-badge)](https://odomai.onrender.com)
 
-<!-- Screenshot: save an image (e.g. docs/screenshot.png), then replace this comment with
-     ![OdomAI screenshot](docs/screenshot.png) -->
+
+![OdomAI screenshot](OdomAI_SS.png)
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.1-000000?logo=flask&logoColor=white)

@@ -190,357 +190,86 @@ function ConfidenceDial({ pct }) {
 // ---------------------------------------------------------------------------
 // Main app
 // ---------------------------------------------------------------------------
-export default function OdomAI() {
-  const [metadata, setMetadata] = useState({ manufacturers: [], modelsByManufacturer: {}, fuelTypes: [], transmissions: [] });
-  const [metadataError, setMetadataError] = useState(null);
-  const [loadingMetadata, setLoadingMetadata] = useState(true);
+// ---------------------------------------------------------------------------
+// Confidence dial — semicircular gauge, red -> green, with a visible pointer
+// ---------------------------------------------------------------------------
+function ConfidenceDial({ pct }) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const angle = -90 + (clamped / 100) * 180; // -90deg (left) to +90deg (right)
+  const color = confidenceColor(clamped);
 
-  const [manufacturer, setManufacturer] = useState("");
-  const [model, setModel] = useState("");
-  const [fuel, setFuel] = useState("");
-  const [transmission, setTransmission] = useState("");
-  const [year, setYear] = useState("");
-  const [miles, setMiles] = useState("");
-
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState(null); // { price, confidence }
-  const [apiError, setApiError] = useState(null);
-
-  // Reading history is now backed by the SQL history table
-  const [currentView, setCurrentView] = useState("predict"); // 'predict' or 'history'
-  const [readingHistory, setReadingHistory] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-
-  const fetchHistory = useCallback(async () => {
-    setLoadingHistory(true);
-    try {
-      const res = await fetch(`${API_BASE}/cars`, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        const normalized = data.map((r) => ({
-          manufacturer: r.make,
-          model: r.model,
-          year: r.year,
-          odometer: r.mileage,
-          price: r.predicted_price,
-          confidence: placeholderConfidence({ year: r.year, miles: r.mileage }),
-          created_at: r.created_at,
-        }));
-        setReadingHistory(normalized);
-      }
-    } catch (err) {
-      console.error("Failed to fetch history", err);
-    } finally {
-      setLoadingHistory(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (currentView === "history") {
-      fetchHistory();
-    }
-  }, [currentView, fetchHistory]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoadingMetadata(true);
-        const res = await fetch(`${API_BASE}/metadata`);
-        if (!res.ok) throw new Error(`Metadata request failed (${res.status})`);
-        const raw = await res.json();
-        if (!cancelled) setMetadata(normalizeMetadata(raw));
-      } catch (err) {
-        if (!cancelled) setMetadataError(err.message || "Couldn't load make/model list.");
-      } finally {
-        if (!cancelled) setLoadingMetadata(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const models = useMemo(() => {
-    if (!manufacturer) return [];
-    return metadata.modelsByManufacturer[manufacturer] || [];
-  }, [manufacturer, metadata]);
-
-  const yearError =
-    year !== "" && (!/^\d+$/.test(String(year)) || Number(year) < MIN_YEAR || Number(year) > MAX_YEAR)
-      ? `Enter a year between ${MIN_YEAR} and ${MAX_YEAR}.`
-      : null;
-
-  const milesError =
-    miles !== "" && (!/^\d+$/.test(String(miles)) || Number(miles) < 0 || Number(miles) > MAX_MILES)
-      ? `Enter mileage between 0 and ${formatMiles(MAX_MILES)}.`
-      : null;
-
-  const canSubmit =
-    manufacturer && model && fuel && transmission && year !== "" && miles !== "" && !yearError && !milesError && !submitting;
-
-  const handleManufacturerChange = (e) => {
-    setManufacturer(e.target.value);
-    setModel(""); // reset dependent dropdown — model list is restricted per manufacturer
-    setResult(null);
+  const r = 80;
+  const cx = 100;
+  const cy = 100;
+  const describeArc = (startAngle, endAngle) => {
+    const toRad = (deg) => ((deg - 180) * Math.PI) / 180;
+    const start = { x: cx + r * Math.cos(toRad(startAngle)), y: cy + r * Math.sin(toRad(startAngle)) };
+    const end = { x: cx + r * Math.cos(toRad(endAngle)), y: cy + r * Math.sin(toRad(endAngle)) };
+    const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+    return `M ${start.x} ${start.y} A ${r} ${r} 0 ${largeArc} 1 ${end.x} ${end.y}`;
   };
 
-  const handleYearChange = (e) => {
-    const v = e.target.value.replace(/[^\d]/g, "").slice(0, 4);
-    setYear(v);
-  };
+  // Needle: base pivot + a triangular pointer tip, so it reads as an arrow
+  const needleLen = r - 10;
+  const tipX = cx + needleLen * Math.sin((angle * Math.PI) / 180);
+  const tipY = cy - needleLen * Math.cos((angle * Math.PI) / 180);
 
-  const handleMilesChange = (e) => {
-    const v = e.target.value.replace(/[^\d]/g, "").slice(0, 6);
-    setMiles(v);
-  };
+  // Small perpendicular offset to build a triangle (arrowhead) at the tip
+  const perpAngle = angle + 90;
+  const baseWidth = 5;
+  const baseLx = cx + baseWidth * Math.sin((perpAngle * Math.PI) / 180);
+  const baseLy = cy - baseWidth * Math.cos((perpAngle * Math.PI) / 180);
+  const baseRx = cx - baseWidth * Math.sin((perpAngle * Math.PI) / 180);
+  const baseRy = cy + baseWidth * Math.cos((perpAngle * Math.PI) / 180);
 
-  const calculate = useCallback(async () => {
-    if (!canSubmit) return;
-    setSubmitting(true);
-    setApiError(null);
-    setResult(null);
-
-    const payload = {
-      manufacturer,
-      model,
-      fuel,
-      transmission,
-      year: Number(year),
-      odometer: Number(miles),
-    };
-
-    try {
-      const res = await fetch(`${API_BASE}/predict`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        let errMsg = `Prediction request failed (${res.status})`;
-        try { const e = await res.json(); if (e.error) errMsg = e.error; } catch {}
-        throw new Error(errMsg);
-      }
-      const data = await res.json();
-
-      const price = data.predicted_price ?? data.price;
-      // Real confidence isn't shipped by the backend yet — fall back to a
-      // deterministic placeholder so the dial still reads meaningfully.
-      const confidence = typeof data.confidence === "number" ? data.confidence : placeholderConfidence(payload);
-
-      if (typeof price !== "number") throw new Error("No price came back from the model.");
-
-      const reading = { ...payload, price, confidence, timestamp: new Date().toISOString() };
-      setResult(reading);
-
-      // History is now saved on the backend and fetched on demand.
-    } catch (err) {
-      setApiError(err.message || "Something went wrong getting a reading.");
-    } finally {
-      setSubmitting(false);
-    }
-  }, [canSubmit, manufacturer, model, fuel, transmission, year, miles]);
+  // A marker dot exactly on the arc at the current position, for extra clarity
+  const markerR = r;
+  const markerX = cx + markerR * Math.sin((angle * Math.PI) / 180);
+  const markerY = cy - markerR * Math.cos((angle * Math.PI) / 180);
 
   return (
-    <div style={styles.page}>
-      <style>{FONT_IMPORT}</style>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+      <svg width="220" height="130" viewBox="0 0 200 115">
+        <defs>
+          <linearGradient id="odomai-gauge-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor={COLORS.red} />
+            <stop offset="50%" stopColor="#D9A441" />
+            <stop offset="100%" stopColor={COLORS.green} />
+          </linearGradient>
+        </defs>
 
-      <header style={styles.header}>
-        <div style={styles.headerTop}>
-          <Logo variant="light" size={30} />
-          <nav style={styles.nav}>
-            <button
-              style={currentView === "predict" ? styles.navActive : styles.navButton}
-              onClick={() => setCurrentView("predict")}
-            >
-              Predict
-            </button>
-            <button
-              style={currentView === "history" ? styles.navActive : styles.navButton}
-              onClick={() => setCurrentView("history")}
-            >
-              My Cars
-            </button>
-          </nav>
-        </div>
-        <p style={styles.tagline}>{TAGLINE}</p>
-      </header>
+        {/* Track */}
+        <path d={describeArc(0, 180)} fill="none" stroke={COLORS.gaugeLight} strokeWidth="14" strokeLinecap="round" />
+        {/* Gradient scale */}
+        <path
+          d={describeArc(0, 180)}
+          fill="none"
+          stroke="url(#odomai-gauge-grad)"
+          strokeWidth="14"
+          strokeLinecap="round"
+          opacity="0.9"
+        />
 
-      <main style={styles.main}>
-        {currentView === "predict" ? (
-          <>
-            <section style={styles.card}>
-              <h2 style={styles.cardTitle}>Take a reading</h2>
+        {/* Marker dot on the arc showing exact position */}
+        <circle cx={markerX} cy={markerY} r="7" fill={COLORS.white} stroke={color} strokeWidth="3" />
 
-          <div style={styles.formGrid}>
-            <label style={styles.field}>
-              <span style={styles.label}>Manufacturer</span>
-              <select
-                style={styles.select}
-                value={manufacturer}
-                onChange={handleManufacturerChange}
-                disabled={loadingMetadata}
-              >
-                <option value="">{loadingMetadata ? "Loading…" : "Select manufacturer"}</option>
-                {metadata.manufacturers.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </label>
+        {/* Needle shaft */}
+        <line x1={cx} y1={cy} x2={tipX} y2={tipY} stroke={COLORS.night} strokeWidth="3" strokeLinecap="round" />
+        {/* Arrowhead at the tip, pointing along the needle direction */}
+        <polygon
+          points={`${tipX},${tipY} ${baseLx},${baseLy} ${baseRx},${baseRy}`}
+          fill={COLORS.night}
+        />
 
-            <label style={styles.field}>
-              <span style={styles.label}>Model</span>
-              <select
-                style={styles.select}
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                disabled={!manufacturer}
-              >
-                <option value="">{manufacturer ? "Select model" : "Pick a manufacturer first"}</option>
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label style={styles.field}>
-              <span style={styles.label}>Fuel Type</span>
-              <select
-                style={styles.select}
-                value={fuel}
-                onChange={(e) => setFuel(e.target.value)}
-                disabled={metadata.fuelTypes.length === 0}
-              >
-                <option value="">Select fuel type</option>
-                {metadata.fuelTypes.map((f) => (
-                  <option key={f} value={f}>
-                    {f.charAt(0).toUpperCase() + f.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label style={styles.field}>
-              <span style={styles.label}>Transmission</span>
-              <select
-                style={styles.select}
-                value={transmission}
-                onChange={(e) => setTransmission(e.target.value)}
-                disabled={metadata.transmissions.length === 0}
-              >
-                <option value="">Select transmission</option>
-                {metadata.transmissions.map((t) => (
-                  <option key={t} value={t}>
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label style={styles.field}>
-              <span style={styles.label}>Year</span>
-              <input
-                style={{ ...styles.input, ...(yearError ? styles.inputError : {}) }}
-                type="number"
-                inputMode="numeric"
-                placeholder={`e.g. ${CURRENT_YEAR - 3}`}
-                value={year}
-                onChange={handleYearChange}
-              />
-              {yearError && <span style={styles.errorText}>{yearError}</span>}
-            </label>
-
-            <label style={styles.field}>
-              <span style={styles.label}>Miles</span>
-              <input
-                style={{ ...styles.input, ...(milesError ? styles.inputError : {}) }}
-                type="number"
-                inputMode="numeric"
-                placeholder="e.g. 42000"
-                value={miles}
-                onChange={handleMilesChange}
-              />
-              {milesError && <span style={styles.errorText}>{milesError}</span>}
-            </label>
-          </div>
-
-          {metadataError && <p style={styles.warnText}>{metadataError} — you can still type once the list loads.</p>}
-
-          <button style={{ ...styles.button, opacity: canSubmit ? 1 : 0.5 }} onClick={calculate} disabled={!canSubmit}>
-            {submitting ? "Reading the gauges…" : "Calculate price"}
-          </button>
-
-          {apiError && <p style={styles.errorText}>{apiError}</p>}
-        </section>
-
-        {result && (
-          <section style={styles.resultCard}>
-            <div style={styles.priceBlock}>
-              <span style={styles.priceLabel}>Estimated value</span>
-              <span style={styles.price}>{formatCurrency(result.price)}</span>
-              <span style={styles.priceSub}>
-                {result.year} {result.manufacturer} {result.model} · {formatMiles(result.odometer)} mi · {result.fuel} · {result.transmission}
-              </span>
-            </div>
-            <ConfidenceDial pct={result.confidence} />
-          </section>
-        )}
-          </>
-        ) : (
-          <section style={styles.historyCard}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h2 style={{ ...styles.cardTitle, margin: 0 }}>My Cars</h2>
-              <button style={styles.refreshButton} onClick={fetchHistory} disabled={loadingHistory}>
-                {loadingHistory ? "Refreshing..." : "Refresh"}
-              </button>
-            </div>
-            {readingHistory.length === 0 ? (
-              <p style={styles.mutedText}>
-                {loadingHistory ? "Loading your history..." : "No saved cars yet. Take a reading to start tracking!"}
-              </p>
-            ) : (
-            <div style={styles.historyTableWrap}>
-              <table style={styles.historyTable}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Vehicle</th>
-                    <th style={styles.th}>Year</th>
-                    <th style={styles.th}>Miles</th>
-                    <th style={styles.th}>Price</th>
-                    <th style={styles.th}>Confidence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {readingHistory.map((r, i) => (
-                    <tr key={i}>
-                      <td style={styles.td}>
-                        {r.manufacturer} {r.model}
-                      </td>
-                      <td style={styles.td}>{r.year}</td>
-                      <td style={styles.td}>{formatMiles(r.odometer)}</td>
-                      <td style={styles.td}>{formatCurrency(r.price)}</td>
-                      <td style={{ ...styles.td, color: confidenceColor(r.confidence), fontWeight: 600 }}>
-                        {r.confidence}%
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            )}
-          </section>
-        )}
-      </main>
-
-      <footer style={styles.footer}>
-        <Logo variant="light" size={18} />
-        <span style={styles.footerText}>Gauges, not guesswork.</span>
-      </footer>
+        {/* Pivot */}
+        <circle cx={cx} cy={cy} r="6" fill={COLORS.night} />
+      </svg>
+      <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 28, fontWeight: 600, color }}>
+        {clamped}%
+      </div>
+      <div style={{ fontSize: 12, letterSpacing: "0.02em", color: COLORS.night, opacity: 0.85, fontWeight: 500 }}>
+        AI confidence reading
+      </div>
     </div>
   );
 }

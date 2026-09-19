@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify
@@ -8,6 +9,8 @@ import numpy as np
 import uuid
 from dotenv import load_dotenv
 from backend.db import init_db, close_db, create_user_if_new, save_car, get_user_cars
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -71,7 +74,7 @@ try:
     )
 except FileNotFoundError:
     MFR_MODELS = {}
-    print("WARNING: vehicles_clean.csv not found — /metadata will return empty options.")
+    logger.error("vehicles_clean.csv not found — /metadata will return empty options.")
 
 
 def get_or_create_user_id():

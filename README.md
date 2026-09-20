@@ -238,33 +238,3 @@ OdomAI/
     ├── requirements.txt
     └── runtime.txt
 ```
-
----
-
-## Known limitations
-
-- **Asking prices, not sale prices.** The data comes from classified ads, so "accuracy" means agreement with listing prices. There is no ground truth for what cars actually sell for.
-- **Limited coverage of new cars.** The training data runs through model year 2022. The app accepts years up to 2026 but shows a lower confidence for them, because those estimates are extrapolation.
-- **Pricing rules are hand-set.** The luxury and progressive adjustments are deliberate business rules, not learned from data. On held-out listings they place the displayed price about 13% below the listing price on median.
-- **Not strictly monotonic.** Tree models can produce small bumps, so a slightly older car occasionally gets a slightly higher estimate than a newer one.
-- **No accounts.** History is tied to a browser cookie, not a user login.
-
-## What I would do next
-
-- Train on completed sales data to estimate real transaction prices.
-- Add trim level, condition and location as features.
-- Replace the hand-set pricing rules with quantile regression, to return a real price range.
-- Move the front end to a Vite build with a component structure and end-to-end tests.
-- Add user accounts and a side-by-side comparison of saved cars.
-
----
-
-## Skills demonstrated
-
-**Data and ML:** pandas data cleaning and feature engineering, regex text normalization, leakage-safe train/test splitting, target encoding, gradient boosting, cross-validation, baseline comparison, and error analysis by segment.
-
-**Backend:** REST API design, input validation, error handling, environment-based configuration, and unit testing.
-
-**Database:** relational schema design, foreign keys, parameterized queries, and idempotent migrations in PostgreSQL.
-
-**Front end:** React state management, controlled forms with live validation, SVG data visualization, and responsive layout.
